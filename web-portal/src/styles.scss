@@ -1,0 +1,219 @@
+@use '@angular/material' as mat;
+@import "../node_modules/leaflet/dist/leaflet.css";
+@import "../node_modules/leaflet-defaulticon-compatibility/dist/leaflet-defaulticon-compatibility.css";
+
+@include mat.core();
+
+// Define a Material 3 theme
+$theme: mat.define-theme((color: (theme-type: light,
+        primary: mat.$green-palette,
+        tertiary: mat.$orange-palette,
+      ),
+      typography: (brand-family: 'Roboto',
+        plain-family: 'Roboto',
+      ),
+      density: (scale: 0,
+      ),
+    ));
+
+html {
+  // Apply the theme to the app
+  @include mat.all-component-themes($theme);
+}
+
+:root {
+  --primary-color: #4CAF50;
+  --bg-color: #f1f5f9;
+  --card-bg: #f8fafc;
+  --tile-bg: #f8fafc;
+  --text-main: #1e293b;
+  --text-secondary: #64748b;
+  --border-color: #e2e8f0;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: 'Roboto', "Helvetica Neue", sans-serif;
+  background-color: var(--bg-color);
+}
+
+.bg-primary {
+  background-color: var(--primary-color) !important;
+}
+
+.text-primary {
+  color: var(--primary-color) !important;
+}
+
+/* Custom utility classes */
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.w-full {
+  width: 100%;
+}
+
+.h-full {
+  height: 100%;
+}
+
+.m-0 {
+  margin: 0;
+}
+
+.p-4 {
+  padding: 1rem;
+}
+
+.gap-2 {
+  gap: 0.5rem;
+}
+
+.gap-4 {
+  gap: 1rem;
+}
+
+.card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  padding: 1rem;
+}
+
+/* Global Material Card Overrides for Matte Background */
+mat-card {
+  background-color: var(--card-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: white;
+  border-top: 1px solid #eee;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  z-index: 1000;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-decoration: none;
+  color: var(--text-secondary);
+  font-size: 10px;
+
+  &.active {
+    color: var(--primary-color);
+  }
+}
+
+.custom-booking-sheet {
+  border-radius: 24px 24px 0 0 !important;
+  overflow: hidden;
+}
+
+/* Modern & Premium Scrollbar (Enhanced Width) */
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 20px;
+  border: 4px solid #f1f5f9;
+  transition: all 0.3s ease;
+
+  &:hover {
+    background: #94a3b8;
+    border-width: 3px;
+  }
+}
+
+/* Firefox compatibility (Auto Width) */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: #cbd5e1 #f1f5f9;
+}
+
+/* Custom Calibration & Attach Fullscreen Dialogs */
+.full-screen-calibration,
+.full-screen-attach {
+  max-width: 100vw !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+
+  .mat-mdc-dialog-container {
+    padding: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .mdc-dialog__surface {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  .mat-mdc-dialog-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-height: 100vh !important;
+  }
+}
+
+/* ===== GLOBAL PRINT STYLES ===== */
+@media print {
+  /* Hide the entire app shell: header, footer, bottom nav */
+  .main-header,
+  .main-footer,
+  .bottom-nav,
+  app-bottom-nav {
+    display: none !important;
+  }
+
+  /* Remove background colors and padding from body */
+  html, body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+  }
+
+  /* Let the main content area fill the page cleanly */
+  .public-site-layout {
+    display: block !important;
+  }
+
+  .main-content {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}
