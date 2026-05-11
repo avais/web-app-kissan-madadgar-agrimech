@@ -7,7 +7,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { MatStepperModule } from '@angular/material/stepper';
+import { MatStepper, MatStepperModule } from '@angular/material/stepper';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatRadioModule } from '@angular/material/radio';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -17,11 +17,11 @@ import { RouterModule, Router } from '@angular/router';
 import { RegionService } from '../../../../core/services/region.service';
 import { DivisionService } from '../../../../core/services/division.service';
 import { DistrictService } from '../../../../core/services/district.service';
-import { MarkazService } from '../../../../core/services/markaz.service';
 import { ImplementService } from '../../../../core/services/implement.service';
+import { MarkazService } from '../../../../core/services/markaz.service';
 import { FarmerApplicationService } from '../../../../core/services/farmer-application.service';
 import { Implement } from '../../../../core/models/implement.model';
-import { forkJoin, finalize } from 'rxjs';
+import { forkJoin, finalize, of, switchMap } from 'rxjs';
 
 @Component({
   selector: 'app-register-farmer-application',
@@ -68,7 +68,7 @@ import { forkJoin, finalize } from 'rxjs';
         </div>
 
         <mat-card class="stepper-card">
-          <mat-stepper linear #stepper class="premium-stepper">
+          <mat-stepper linear #stepper="matStepper" class="premium-stepper">
             
             <ng-template matStepperIcon="number" let-index="index">
               <mat-icon *ngIf="index === 0">person</mat-icon>
@@ -152,7 +152,10 @@ import { forkJoin, finalize } from 'rxjs';
                   </div>
                 </div>
                 <div class="step-actions">
-                  <button mat-flat-button class="next-btn" matStepperNext>Next Step <mat-icon>arrow_forward</mat-icon></button>
+                  <button mat-flat-button type="button" class="next-btn" (click)="onProfileNext(stepper)" [disabled]="checkingCnic()">
+                    <ng-container *ngIf="!checkingCnic(); else cnicCheckSpinner">Next Step <mat-icon>arrow_forward</mat-icon></ng-container>
+                    <ng-template #cnicCheckSpinner><mat-spinner diameter="22"></mat-spinner></ng-template>
+                  </button>
                 </div>
               </form>
             </mat-step>
@@ -175,9 +178,20 @@ import { forkJoin, finalize } from 'rxjs';
                   </mat-form-field>
                   <mat-form-field appearance="outline">
                     <mat-label>District</mat-label>
-                    <mat-select formControlName="districtId">
+                    <mat-select formControlName="districtId" (selectionChange)="onDistrictChange($event.value)">
                       <mat-option *ngFor="let dist of districts" [value]="dist.id">{{dist.name}}</mat-option>
                     </mat-select>
+                  </mat-form-field>
+                  <mat-form-field appearance="outline">
+                    <mat-label>Tehsil</mat-label>
+                    <mat-select formControlName="markazId">
+                      <mat-option *ngFor="let t of tehsils" [value]="t.id">{{t.name}}</mat-option>
+                    </mat-select>
+                  </mat-form-field>
+                  <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>Address</mat-label>
+                    <input matInput formControlName="address" placeholder="Enter full mailing address">
+                    <mat-icon matPrefix>home</mat-icon>
                   </mat-form-field>
                 </div>
                 <div class="step-actions">
@@ -320,6 +334,8 @@ import { forkJoin, finalize } from 'rxjs';
                       <div class="summ-item"><span>Region</span><strong>{{getSelectedRegion()}}</strong></div>
                       <div class="summ-item"><span>Division</span><strong>{{getSelectedDivision()}}</strong></div>
                       <div class="summ-item"><span>District</span><strong>{{getSelectedDistrict()}}</strong></div>
+                      <div class="summ-item"><span>Tehsil</span><strong>{{getSelectedTehsil()}}</strong></div>
+                      <div class="summ-item"><span>Address</span><strong>{{locationForm.get('address')?.value}}</strong></div>
                     </div>
                   </div>
 
@@ -565,6 +581,7 @@ import { forkJoin, finalize } from 'rxjs';
 
     .step-actions { display: flex; justify-content: flex-end; gap: 16px; margin-top: 48px; border-top: 1px solid #e2e8f0; padding-top: 32px; }
     .next-btn { background: #10b981 !important; color: white !important; font-weight: 800; border-radius: 16px; padding: 0 36px; height: 54px; letter-spacing: 0.5px; }
+    .next-btn mat-spinner { display: inline-block; vertical-align: middle; }
     .submit-btn { background: #1e293b !important; color: white !important; font-weight: 800; border-radius: 16px; padding: 0 54px; height: 56px; font-size: 15px; }
 
     .loader-overlay {
@@ -590,6 +607,7 @@ export class RegisterFarmerApplicationComponent implements OnInit {
   private regionService = inject(RegionService);
   private divisionService = inject(DivisionService);
   private districtService = inject(DistrictService);
+  private markazService = inject(MarkazService);
   private implementService = inject(ImplementService);
 
   farmerForm: FormGroup;
@@ -601,12 +619,14 @@ export class RegisterFarmerApplicationComponent implements OnInit {
   regions: any[] = [];
   divisions: any[] = [];
   districts: any[] = [];
+  tehsils: any[] = [];
   implements: Implement[] = [];
 
   cnicFront: File | null = null;
   cnicBack: File | null = null;
   finalDecision: string = 'ACCEPTED';
   isLocationLoading = signal(false);
+  checkingCnic = signal(false);
   loaderTitle = signal('Fetching Data');
   loaderDesc = signal('Please wait while we sync with the server...');
 
@@ -628,7 +648,9 @@ export class RegisterFarmerApplicationComponent implements OnInit {
     this.locationForm = this.fb.group({
       regionId: ['', Validators.required],
       divisionId: ['', Validators.required],
-      districtId: ['', Validators.required]
+      districtId: ['', Validators.required],
+      markazId: [''],
+      address: ['', Validators.required]
     });
 
     this.implementForm = this.fb.group({
@@ -686,7 +708,10 @@ export class RegisterFarmerApplicationComponent implements OnInit {
   }
 
   onDistrictChange(districtId: number) {
-    // No more Tehsils to fetch
+    this.locationForm.patchValue({ markazId: '' });
+    this.tehsils = [];
+    this.markazService.getMarkazByDistrict(districtId)
+      .subscribe(data => this.tehsils = data);
   }
 
   selectImplement(id: number) { this.implementForm.get('implementId')?.setValue(id); }
@@ -724,6 +749,50 @@ export class RegisterFarmerApplicationComponent implements OnInit {
     return `${cnic[0].join('')}-${cnic[1].join('')}-${cnic[2].join('')}`;
   }
 
+  onProfileNext(stepper: MatStepper) {
+    if (!this.farmerForm.valid) {
+      this.farmerForm.markAllAsTouched();
+      this.snackBar.open('Please complete all profile fields.', 'Close', {
+        duration: 4000,
+        horizontalPosition: 'right',
+        verticalPosition: 'top'
+      });
+      return;
+    }
+    const cnic = this.getCnicString();
+    if (cnic.replace(/\D/g, '').length !== 13) {
+      this.snackBar.open('Enter a valid 13-digit CNIC.', 'Close', {
+        duration: 4000,
+        horizontalPosition: 'right',
+        verticalPosition: 'top'
+      });
+      return;
+    }
+    this.checkingCnic.set(true);
+    this.applicationService.checkCnicExists(cnic).pipe(
+      finalize(() => this.checkingCnic.set(false))
+    ).subscribe({
+      next: (res) => {
+        if (res.exists) {
+          this.snackBar.open(
+            'This CNIC is already registered. You cannot continue with a duplicate CNIC.',
+            'Close',
+            { duration: 7000, horizontalPosition: 'right', verticalPosition: 'top' }
+          );
+          return;
+        }
+        stepper.next();
+      },
+      error: () => {
+        this.snackBar.open('Could not verify CNIC. Please try again.', 'Close', {
+          duration: 5000,
+          horizontalPosition: 'right',
+          verticalPosition: 'top'
+        });
+      }
+    });
+  }
+
   getSelectedImplementName() {
     return this.implements.find(i => i.id === this.implementForm.value.implementId)?.name || 'None';
   }
@@ -744,13 +813,17 @@ export class RegisterFarmerApplicationComponent implements OnInit {
     return this.districts.find(d => d.id === this.locationForm.value.districtId)?.name || 'N/A';
   }
 
+  getSelectedTehsil() {
+    return this.tehsils.find(t => t.id === this.locationForm.value.markazId)?.name || 'N/A';
+  }
+
   private applicationService = inject(FarmerApplicationService);
   private router = inject(Router);
   private snackBar = inject(MatSnackBar);
 
   onSubmitAll() {
-    this.loaderTitle.set('Registering Application');
-    this.loaderDesc.set('Securely saving data to central registry...');
+    this.loaderTitle.set('Uploading Documents');
+    this.loaderDesc.set('Uploading CNIC documents to secure storage...');
     this.isLocationLoading.set(true);
 
     const farmerData = this.farmerForm.value;
@@ -758,33 +831,41 @@ export class RegisterFarmerApplicationComponent implements OnInit {
     const technicalData = this.technicalForm.value;
     const implementId = this.implementForm.get('implementId')?.value;
 
-    const payload = {
-      farmerName: farmerData.farmerName,
-      fatherName: farmerData.fatherName,
-      contactNumber: farmerData.contactNumber,
-      cnic: this.getCnicString(),
-      regionId: locationData.regionId,
-      divisionId: locationData.divisionId,
-      districtId: locationData.districtId,
-      markazId: null as any,
-      implementId: implementId,
-      yearOfApplication: '2024-25', // Default or from implement
-      projectTypeId: localStorage.getItem('selectedProjectTypeId') ? Number(localStorage.getItem('selectedProjectTypeId')) : null,
-      landArea: technicalData.totalLandArea,
+    const uploadFront$ = this.cnicFront ? this.applicationService.uploadFile(this.cnicFront) : of(null);
+    const uploadBack$ = this.cnicBack ? this.applicationService.uploadFile(this.cnicBack) : of(null);
 
+    forkJoin({ front: uploadFront$, back: uploadBack$ }).pipe(
+      switchMap(uploaded => {
+        this.loaderTitle.set('Registering Application');
+        this.loaderDesc.set('Securely saving data to central registry...');
 
-      landUnit: technicalData.landUnit,
-      tractorHP: technicalData.tractorHP,
-      tractorModel: technicalData.tractorModel,
-      status: this.finalDecision
-    };
+        const payload: any = {
+          farmerName: farmerData.farmerName,
+          fatherName: farmerData.fatherName,
+          contactNumber: farmerData.contactNumber,
+          address: locationData.address,
+          cnic: this.getCnicString(),
+          regionId: locationData.regionId,
+          divisionId: locationData.divisionId,
+          districtId: locationData.districtId,
+          markazId: locationData.markazId || null,
+          implementId: implementId,
+          yearOfApplication: '2024-25',
+          projectTypeId: localStorage.getItem('selectedProjectTypeId') ? Number(localStorage.getItem('selectedProjectTypeId')) : null,
+          landArea: technicalData.totalLandArea,
+          landUnit: technicalData.landUnit,
+          tractorHP: technicalData.tractorHP,
+          tractorModel: technicalData.tractorModel,
+          status: this.finalDecision,
+          farmerCnicFront: uploaded.front?.fileName || null,
+          farmerCnicBack: uploaded.back?.fileName || null
+        };
 
-    console.log('Sending Registration Payload:', payload);
-
-    this.applicationService.register(payload).pipe(
+        return this.applicationService.register(payload);
+      }),
       finalize(() => this.isLocationLoading.set(false))
     ).subscribe({
-      next: (res) => {
+      next: (res: any) => {
         this.snackBar.open(`Application Registered! ID: ${res.applicationNumber}`, 'Close', {
           duration: 5000,
           horizontalPosition: 'right',

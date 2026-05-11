@@ -20,6 +20,8 @@ export interface User {
     designation?: string;
     active?: boolean;
     projectTypeIds?: number[];
+    assignedDistrictIds?: number[];
+    assignedDistrictNames?: string[];
 }
 
 

@@ -14,8 +14,8 @@ import autoTable from 'jspdf-autotable';
 import { InspectionQICReportService } from '../../../../core/services/inspection-qic-report.service';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { Subject } from 'rxjs';
-import { debounceTime, distinctUntilChanged, finalize } from 'rxjs/operators';
+import { Subject, firstValueFrom } from 'rxjs';
+import { debounceTime, distinctUntilChanged, finalize, filter, map } from 'rxjs/operators';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { AuthService } from '../../../../core/services/auth.service';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
@@ -121,24 +121,11 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
                 <span class="status-chip" 
                       [class.submitted]="reportStatus() === 'SUBMITTED'"
                       [class.sent-to-convener]="reportStatus() === 'SENT_TO_CONVENER'">
-                  {{ reportStatus()?.split('_')?.join(' ') }}
+                  {{ reportStatus().split('_').join(' ') }}
                 </span>
               </div>
               <h1>{{ reportId() }}</h1>
             </div>
-          </div>
-
-          <div class="header-right">
-             <div class="view-toggle-group">
-                <button class="toggle-btn" [class.active]="viewMode() === 'table'" (click)="onViewModeChange('table')" matTooltip="Switch to Table">
-                  <mat-icon>table_chart</mat-icon>
-                  <span *ngIf="viewMode() === 'table'">Table</span>
-                </button>
-                <button class="toggle-btn" [class.active]="viewMode() === 'cards'" (click)="onViewModeChange('cards')" matTooltip="Switch to Cards">
-                  <mat-icon>grid_view</mat-icon>
-                  <span *ngIf="viewMode() === 'cards'">Cards</span>
-                </button>
-             </div>
           </div>
         </div>
 
@@ -214,6 +201,16 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
                       <mat-icon>file_download</mat-icon>
                    </button>
                 </div>
+
+                <div class="uploaded-chip-box invoice" *ngIf="report()?.generatedInvoicePath">
+                   <div class="info-side">
+                       <mat-icon>verified</mat-icon>
+                       <span>Download Invoice</span>
+                   </div>
+                   <button mat-icon-button class="dl-action-btn" (click)="downloadInvoice()" matTooltip="Download sales tax invoice (for letterhead)">
+                      <mat-icon>file_download</mat-icon>
+                   </button>
+                </div>
  
                 <button mat-flat-button class="toolbar-submit-btn" *ngIf="!isConvener() && (reportStatus() === 'NOT_SUBMITTED' || reportStatus() === 'CREATED')" (click)="openSubmitConfirmation('submit')">
                    <mat-icon>send</mat-icon>
@@ -263,16 +260,38 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
                               style="position: absolute; top: 0; left: 0; right: 0; z-index: 10; height: 3px;">
             </mat-progress-bar>
 
-            <div class="table-actions">
-              <div class="search-box">
-                <mat-icon>search</mat-icon>
-                <input type="text" placeholder="Search by Farmer Name or CNIC..." 
-                       [(ngModel)]="searchQuery" (ngModelChange)="onSearchChange()">
+            <div class="table-actions" style="display: flex; justify-content: space-between; align-items: center;">
+              <div class="left-actions" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="search-box">
+                  <mat-icon>search</mat-icon>
+                  <input type="text" placeholder="Search by Farmer Name or CNIC..." 
+                         [(ngModel)]="searchQuery" (ngModelChange)="onSearchChange()">
+                </div>
+                
+                <div class="mode-label">
+                  <mat-icon>{{ viewMode() === 'table' ? 'list' : 'view_module' }}</mat-icon>
+                  <span>Displaying {{ applications().length }} of {{ totalRecords }} applications in {{ viewMode() }} mode</span>
+                </div>
               </div>
-              
-              <div class="mode-label">
-                <mat-icon>{{ viewMode() === 'table' ? 'list' : 'view_module' }}</mat-icon>
-                <span>Displaying {{ applications().length }} of {{ totalRecords }} applications in {{ viewMode() }} mode</span>
+
+              <div class="right-actions">
+                <div class="view-toggle-group">
+                  <button type="button" class="toggle-btn" [class.active]="viewMode() === 'table'" (click)="onViewModeChange('table')" matTooltip="Switch to Table">
+                    <mat-icon>table_chart</mat-icon>
+                    <span *ngIf="viewMode() === 'table'">Table</span>
+                  </button>
+                  <button type="button" class="toggle-btn" [class.active]="viewMode() === 'cards'" (click)="onViewModeChange('cards')" matTooltip="Switch to Cards">
+                    <mat-icon>grid_view</mat-icon>
+                    <span *ngIf="viewMode() === 'cards'">Cards</span>
+                  </button>
+                </div>
+                <button mat-flat-button class="toolbar-excel-btn" 
+                        (click)="downloadExcelList()" 
+                        matTooltip="Download applications in Excel format"
+                        style="height: 48px; padding: 0 24px; border-radius: 12px; font-size: 13px; font-weight: 800; display: flex; align-items: center; justify-content: center; gap: 10px; border: none !important; cursor: pointer;">
+                    <mat-icon style="display: inline-flex; align-items: center; justify-content: center; height: 20px; width: 20px; font-size: 20px;">table_view</mat-icon>
+                    <span style="line-height: 1; display: inline-flex; align-items: center;">Download Excel Report</span>
+                </button>
               </div>
             </div>
 
@@ -524,7 +543,7 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
     }
 
     .view-toggle-group {
-      display: flex; background: #f1f5f9; padding: 4px; border-radius: 12px; margin-left: 8px; align-items: center;
+      display: flex; background: #f1f5f9; padding: 4px; border-radius: 12px; align-items: center; flex-shrink: 0;
       .toggle-btn { 
         display: flex; align-items: center; justify-content: center; gap: 8px;
         height: 40px; min-width: 40px; padding: 0 12px; border-radius: 10px; color: #64748b; 
@@ -579,9 +598,6 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
             h1 { margin: 0; font-size: 28px; font-weight: 900; color: #0f172a; letter-spacing: -0.5px; }
           }
         }
-        .header-right {
-          display: flex; align-items: center; gap: 16px;
-        }
       }
 
       .history-btn {
@@ -631,7 +647,7 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
         box-shadow: 0 10px 40px rgba(0,0,0,0.03); gap: 24px;
         
         .toolbar-btns {
-           display: flex; align-items: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1;
            
            button {
                height: 48px; padding: 0 24px; border-radius: 12px; font-size: 13px; font-weight: 800;
@@ -671,6 +687,11 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
                &:hover { background: #4f46e5; transform: translateY(-3px); box-shadow: 0 15px 35px rgba(99, 102, 241, 0.25); }
            }
 
+           .toolbar-excel-btn {
+               background: #16a34a; color: white; box-shadow: 0 8px 15px rgba(22, 163, 74, 0.15);
+               &:hover { background: #15803d; transform: translateY(-3px); box-shadow: 0 15px 35px rgba(22, 163, 74, 0.25); }
+           }
+
            .toolbar-upload-btn {
                background: white; border: 2.5px dashed #cbd5e1 !important; color: #64748b;
                &:hover { border-color: #3b82f6 !important; color: #3b82f6; background: #eff6ff; }
@@ -680,6 +701,7 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
                    background: #f0fdf4; border: 1.5px solid #dcfce7; border-radius: 12px; padding: 0 8px 0 16px;
                    display: flex; align-items: center; gap: 12px; height: 48px;
                    &.bill { background: #eff6ff; border-color: #dbeafe; .info-side { color: #2563eb; } .dl-action-btn { color: #2563eb; } }
+                   &.invoice { background: #fff7ed; border-color: #fed7aa; .info-side { color: #c2410c; } .dl-action-btn { color: #c2410c; } &:hover .dl-action-btn { background: #ea580c; color: white; } }
                    &.draft { background: #eef2ff; border-color: #e0e7ff; .info-side { color: #4f46e5; } .dl-action-btn { color: #4f46e5; } }
                    
                    .info-side {
@@ -709,6 +731,12 @@ import { ReportStateService } from '../../../../core/services/report-state.servi
           
           .table-actions {
             margin-bottom: 24px;
+            .right-actions {
+              display: flex;
+              align-items: center;
+              gap: 16px;
+              flex-wrap: wrap;
+            }
             .search-box {
               background: #f8fafc; border-radius: 16px; padding: 0 20px; display: flex; align-items: center; gap: 12px;
               width: 400px; height: 56px; border: 2px solid transparent; transition: all 0.3s ease;
@@ -1053,13 +1081,16 @@ export class InspectionReportViewComponent implements OnInit {
     this.qrCodes.set(qrMap);
   }
 
-   approveReport() {
+   approveReport(navigateToListAfter = false) {
     if (!this.internalReportId) return;
     
     this.reportService.approveReport(this.internalReportId).subscribe({
       next: (res) => {
         this.snackBar.open('Report Approved and Finalized Successfully!', 'Success', { duration: 3000 });
         this.initFromReport(res);
+        if (navigateToListAfter) {
+          this.navigateToQicReportsList();
+        }
       },
       error: (err) => {
         console.error('Failed to approve report', err);
@@ -1068,19 +1099,28 @@ export class InspectionReportViewComponent implements OnInit {
     });
   }
 
-   submitReport() {
+   submitReport(navigateToListAfter = false) {
     if (!this.internalReportId) return;
     
     this.reportService.submitReport(this.internalReportId, {}).subscribe({
       next: (res) => {
         this.snackBar.open('Report Submitted to Convener Successfully!', 'Success', { duration: 3000 });
         this.initFromReport(res);
+        if (navigateToListAfter) {
+          this.navigateToQicReportsList();
+        }
       },
       error: (err) => {
         console.error('Failed to submit report', err);
         this.snackBar.open('Error: Could not submit report.', 'Error', { duration: 3000 });
       }
     });
+  }
+
+  /** QIC inspection batches list (after signed upload flow). */
+  private navigateToQicReportsList(): void {
+    this.isLoadingReport.set(false);
+    this.router.navigate(['/portal/quality-inspection/reports']);
   }
 
 
@@ -1203,14 +1243,14 @@ export class InspectionReportViewComponent implements OnInit {
       next: async (fullData: any) => {
         try {
         const firstApp = fullData.content.length > 0 ? fullData.content[0] : {};
-        const district = r.districtName || firstApp.districtName || 'Concerned';
-        let division = r.divisionName || firstApp.divisionName || 'N/A';
+        const farmerDistrict = firstApp.districtName ?? '';
+        const convenerDivision = (r.convenerDivisionName ?? '').trim();
         const rawFirmName = r.firmName || firstApp.bookedByFirmName || 'the assigned firm';
         const cleanedFirmName = rawFirmName.split(' ').filter((item: string, index: number, array: string[]) => array.indexOf(item) === index).join(' ');
         const implementName = r.implementName || firstApp.implementName || 'Super Seeder';
 
         // Format Date to DD-MM-YYYY
-        const dateObj = r.generatedAt ? new Date(r.generatedAt) : new Date();
+        const dateObj = new Date();
         const reportDate = `${String(dateObj.getDate()).padStart(2, '0')}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${dateObj.getFullYear()}`;
 
         const baseUrl = window.location.origin;
@@ -1250,8 +1290,8 @@ export class InspectionReportViewComponent implements OnInit {
             pdfDoc.setFont('times', 'normal');
             pdfDoc.setFontSize(11);
 
-            pdfDoc.text(`Farmer District: ${district}`, margin, 68);
-            pdfDoc.text(`Firm: ${cleanedFirmName}, ${division}`, pageWidth - margin, 68, { align: 'right' });
+            pdfDoc.text(`Farmer District: ${farmerDistrict}`, margin, 68);
+            pdfDoc.text(`Firm: ${cleanedFirmName}`, pageWidth - margin, 68, { align: 'right' });
 
             pdfDoc.setFont('times', 'bold');
             pdfDoc.text(`machine / implement: ${implementName}`, margin, 76);
@@ -1342,9 +1382,7 @@ export class InspectionReportViewComponent implements OnInit {
 
         finalY += (splitCertText.length * 5) + 15;
 
-        // Signatories Section
-        division = r.divisionName || firstApp.divisionName || 'Concerned';
-
+        // Signatories — "X Division" is the firm convener's division (firms.convener_id → user location)
         const sigColLeft = pageWidth / 4 + 10;
         const sigColRight = (pageWidth * 3) / 4 - 10;
 
@@ -1374,7 +1412,7 @@ export class InspectionReportViewComponent implements OnInit {
 
         // Convener (Right Column Centered)
         doc.text('Director Agriculture Engineering', sigColRight, finalY, { align: 'center' });
-        doc.text(`${division} Division`, sigColRight, finalY + 4, { align: 'center' });
+        doc.text(convenerDivision ? `${convenerDivision} Division` : '', sigColRight, finalY + 4, { align: 'center' });
         doc.text('Convener', sigColRight, finalY + 12, { align: 'center' });
 
         finalY += 25;
@@ -1399,8 +1437,8 @@ export class InspectionReportViewComponent implements OnInit {
         const copies = [
           '1. The Director General Agriculture (Field), Punjab, Lahore',
           '2. All Committee Members',
-          `3. The Deputy Director Agricultural Engineering, Convener of the District Inspection Committee (${district})`,
-          `4. The Assistant Director, Agricultural Engineering (${district})`,
+          `3. The Deputy Director Agricultural Engineering, Convener of the District Inspection Committee (${farmerDistrict})`,
+          `4. The Assistant Director, Agricultural Engineering (${farmerDistrict})`,
           `5. M/S ${cleanedFirmName}`
         ];
 
@@ -1561,14 +1599,14 @@ export class InspectionReportViewComponent implements OnInit {
             doc.setFont('times', 'normal');
             doc.text('District', valueCol + 50, currentY);
             doc.setFont('times', 'bold');
-            doc.text(app.districtName || r.districtName || 'N/A', valueCol + 65, currentY);
+            doc.text(app.districtName || 'N/A', valueCol + 65, currentY);
 
             currentY += lineSpacing;
             // Row 4: Firm
             doc.setFont('times', 'normal');
             doc.text('Firm Name and address', labelCol, currentY);
             doc.setFont('times', 'bold');
-            doc.text(`M/S ${r.firmName || app.bookedByFirmName || 'N/A'}, ${app.divisionName || 'N/A'}`, valueCol + 5, currentY);
+            doc.text(`M/S ${r.firmName || app.bookedByFirmName || 'N/A'}`, valueCol + 5, currentY);
 
             currentY += lineSpacing;
             // Row 5: Name of Implement
@@ -1643,18 +1681,18 @@ export class InspectionReportViewComponent implements OnInit {
             
             // Row 1 - Left: Member 2
             doc.text('Rep of Deputy Director Agriculture', colCenterLeft, row1Y, { align: 'center' });
-            doc.text('(Water Management) ' + (app.districtName || r.districtName || ''), colCenterLeft, row1Y + 4, { align: 'center' });
+            doc.text('(Water Management) ' + (app.districtName || ''), colCenterLeft, row1Y + 4, { align: 'center' });
             doc.text('(Member)', colCenterLeft, row1Y + 8, { align: 'center' });
 
             // Row 1 - Right: Member 3 (Secretary)
             doc.text('Assistant Director Agricultural Engineering', colCenterRight, row1Y, { align: 'center' });
-            doc.text(app.districtName || r.districtName || '', colCenterRight, row1Y + 4, { align: 'center' });
+            doc.text(app.districtName || '', colCenterRight, row1Y + 4, { align: 'center' });
             doc.text('(Member / Secretary)', colCenterRight, row1Y + 8, { align: 'center' });
 
             // Row 2 - Left: Member 4
             const row2Y = row1Y + 22;
             doc.text('Rep of PISMC / NESPAK', colCenterLeft, row2Y, { align: 'center' });
-            doc.text(app.districtName || r.districtName || '', colCenterLeft, row2Y + 4, { align: 'center' });
+            doc.text(app.districtName || '', colCenterLeft, row2Y + 4, { align: 'center' });
             doc.text('(Member)', colCenterLeft, row2Y + 8, { align: 'center' });
 
             // Final Footer Section (No. / Dated + Copy to + Convener)
@@ -1682,7 +1720,7 @@ export class InspectionReportViewComponent implements OnInit {
             doc.setFont('times', 'bold');
             doc.setFontSize(9);
             doc.text('Deputy Director Agricultural Engineering', colCenterRight, row2Y, { align: 'center' });
-            doc.text(app.districtName || r.districtName || '', colCenterRight, row2Y + 4, { align: 'center' });
+            doc.text(app.districtName || '', colCenterRight, row2Y + 4, { align: 'center' });
             doc.text('(Convener)', colCenterRight, row2Y + 8, { align: 'center' });
           }
 
@@ -1716,9 +1754,9 @@ export class InspectionReportViewComponent implements OnInit {
                next: (updatedReport) => {
                  this.initFromReport(updatedReport);
                   this.snackBar.open('Signed document uploaded and associated successfully!', 'OK', { duration: 3000 });
-                 
-                 // Show Confirmation Dialog to Submit
-                 this.openSubmitConfirmation(this.isConvener() ? 'approve' : 'submit');
+                 this.isLoadingReport.set(false);
+                 // Optional submit/approve; then return to QIC reports list (same as cancel on dialog)
+                 this.openSubmitConfirmation(this.isConvener() ? 'approve' : 'submit', true);
                },
                error: (err) => {
                  this.isLoadingReport.set(false);
@@ -1737,7 +1775,7 @@ export class InspectionReportViewComponent implements OnInit {
     }
   }
 
-   public openSubmitConfirmation(mode: 'submit' | 'approve' = 'submit') {
+   public openSubmitConfirmation(mode: 'submit' | 'approve' = 'submit', navigateToListAfter = false) {
     const dialogRef = this.dialog.open(SubmitReportDialogComponent, {
       width: '450px',
       data: {
@@ -1750,10 +1788,12 @@ export class InspectionReportViewComponent implements OnInit {
     dialogRef.afterClosed().subscribe(confirmed => {
       if (confirmed) {
         if (mode === 'approve') {
-          this.approveReport();
+          this.approveReport(navigateToListAfter);
         } else {
-          this.submitReport();
+          this.submitReport(navigateToListAfter);
         }
+      } else if (navigateToListAfter) {
+        this.navigateToQicReportsList();
       }
     });
   }
@@ -1790,6 +1830,306 @@ export class InspectionReportViewComponent implements OnInit {
     }
   }
 
+  downloadInvoice() {
+    const report = this.report();
+    if (report?.generatedInvoicePath) {
+      const url = `${environment.apiUrl}/api/files/${report.generatedInvoicePath}`;
+      window.open(url, '_blank');
+    } else {
+      this.snackBar.open('No invoice file available for download.', 'Info', { duration: 3000 });
+    }
+  }
+
+  private async uploadPdfGetFileName(file: File): Promise<string> {
+    const name = await firstValueFrom(
+      this.fileUploadService.upload(file).pipe(
+        filter((e) => e.type === HttpEventType.Response),
+        map((e: any) => e.body?.fileName as string)
+      )
+    );
+    if (!name) {
+      throw new Error('Upload response missing fileName');
+    }
+    return name;
+  }
+
+  /**
+   * Sales tax invoice: centered content block on A4 for letterhead; tables share one width for a clean “plate”.
+   */
+  private buildSalesTaxInvoicePdf(report: any, passedApps: any[], billDate: string): jsPDF {
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const blockW = 178;
+    const side = (pageW - blockW) / 2;
+    const contentW = blockW;
+
+    const fmt = (n: number) => Math.round(n).toLocaleString('en-PK');
+    const gstRate = 0.18;
+
+    const supplierName = report?.firmName || 'Supplier';
+    const taxOrBlank = (v: unknown) => {
+      const s = v != null ? String(v).trim() : '';
+      return s.length > 0 ? s : '';
+    };
+    const supplierNtn = taxOrBlank(report?.firmNtn);
+    const supplierStrn = taxOrBlank(report?.firmStrn);
+
+    const labelStyle = { fontStyle: 'bold' as const, fillColor: [236, 239, 242] as [number, number, number] };
+
+    autoTable(doc, {
+      startY: 56,
+      theme: 'grid',
+      tableWidth: contentW,
+      styles: {
+        font: 'times',
+        fontSize: 6.8,
+        cellPadding: { top: 0.45, bottom: 0.45, left: 1.1, right: 1.1 },
+        valign: 'middle',
+        textColor: [15, 23, 42],
+        lineColor: [30, 41, 59],
+        lineWidth: 0.12
+      },
+      body: [
+        [
+          {
+            content: 'SALES TAX INVOICE',
+            colSpan: 4,
+            styles: {
+              halign: 'center',
+              fontStyle: 'bold',
+              fontSize: 10,
+              textColor: [15, 23, 42],
+              fillColor: [176, 184, 194],
+              minCellHeight: 5.5
+            }
+          }
+        ],
+        [
+          {
+            content: 'PARTICULARS OF SUPPLIER',
+            colSpan: 2,
+            styles: {
+              fontStyle: 'bold',
+              halign: 'center',
+              fontSize: 6.5,
+              fillColor: [214, 219, 226],
+              minCellHeight: 3.6
+            }
+          },
+          {
+            content: 'PARTICULARS OF BUYER',
+            colSpan: 2,
+            styles: {
+              fontStyle: 'bold',
+              halign: 'center',
+              fontSize: 6.5,
+              fillColor: [214, 219, 226],
+              minCellHeight: 3.6
+            }
+          }
+        ],
+        [
+          { content: 'Date', styles: labelStyle },
+          billDate,
+          { content: 'Time of supply', styles: labelStyle },
+          ''
+        ],
+        [
+          { content: "Supplier's Name", styles: labelStyle },
+          supplierName,
+          { content: "Buyer's Name", styles: labelStyle },
+          'Director General Agriculture Field Lahore'
+        ],
+        [
+          { content: 'Address', styles: labelStyle },
+          '',
+          { content: 'Address', styles: labelStyle },
+          'Lahore'
+        ],
+        [
+          { content: 'NTN No.', styles: labelStyle },
+          supplierNtn,
+          { content: 'FTN', styles: labelStyle },
+          '9020503-7'
+        ],
+        [
+          { content: 'S.T Reg. No.', styles: { ...labelStyle, valign: 'middle' as const } },
+          { content: supplierStrn, styles: { valign: 'middle' as const } },
+          {
+            content: 'Terms Of Sale',
+            colSpan: 2,
+            styles: {
+              ...labelStyle,
+              fontSize: 8.4,
+              minCellHeight: 11,
+              valign: 'top' as const,
+              cellPadding: { top: 1.2, bottom: 3, left: 1.1, right: 1.1 }
+            }
+          }
+        ]
+      ],
+      columnStyles: {
+        0: { cellWidth: contentW * 0.17 },
+        1: { cellWidth: contentW * 0.33 },
+        2: { cellWidth: contentW * 0.17 },
+        3: { cellWidth: contentW * 0.33 }
+      },
+      margin: { left: side, right: side }
+    });
+
+    const y = ((doc as any).lastAutoTable?.finalY as number) + 2.5;
+
+    const rows: (string | number)[][] = [];
+    let sumExcl = 0;
+    let sumTax = 0;
+    let sumIncl = 0;
+
+    const byImplement = new Map<
+      string,
+      { qty: number; sumIncl: number; sumExcl: number; sumTax: number }
+    >();
+
+    for (const app of passedApps) {
+      const incl = Number(app.totalCostPrice) || 0;
+      const excl = Math.round(incl / (1 + gstRate));
+      const tax = incl - excl;
+      sumExcl += excl;
+      sumTax += tax;
+      sumIncl += incl;
+
+      const key = String(app.implementName || 'Goods').trim() || 'Goods';
+      const cur = byImplement.get(key) ?? { qty: 0, sumIncl: 0, sumExcl: 0, sumTax: 0 };
+      cur.qty += 1;
+      cur.sumIncl += incl;
+      cur.sumExcl += excl;
+      cur.sumTax += tax;
+      byImplement.set(key, cur);
+    }
+
+    for (const [name, g] of Array.from(byImplement.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+      const unitIncl = g.qty > 0 ? Math.round(g.sumIncl / g.qty) : 0;
+      rows.push([name, g.qty, fmt(unitIncl), fmt(g.sumExcl), '18%', fmt(g.sumTax), fmt(g.sumIncl)]);
+    }
+
+    const withholding = Math.round(sumTax / 5);
+    const finalTax = sumTax - withholding;
+
+    autoTable(doc, {
+      startY: y,
+      head: [[
+        'Description Of Goods',
+        'Qty',
+        'Price',
+        'Sales Tax Excl.\nValue Rs.',
+        'Rate Of\nSale Tax',
+        'Sales\nTaxable',
+        'Value Including\nSales Tax'
+      ]],
+      body: rows,
+      foot: [
+        [
+          { content: 'Total', styles: { fontStyle: 'bold', halign: 'left' } },
+          '',
+          '',
+          { content: fmt(sumExcl), styles: { fontStyle: 'bold', halign: 'right' } },
+          '',
+          { content: fmt(sumTax), styles: { fontStyle: 'bold', halign: 'right' } },
+          { content: fmt(sumIncl), styles: { fontStyle: 'bold', halign: 'right' } }
+        ],
+        [
+          {
+            content: 'Deduction at source 1/5th Withholding Tax on GST',
+            colSpan: 4,
+            styles: { halign: 'left', fontStyle: 'bold' }
+          },
+          { content: '1/5th', styles: { halign: 'right' } },
+          { content: fmt(withholding), styles: { halign: 'right' } },
+          ''
+        ],
+        [
+          { content: 'Total:', styles: { fontStyle: 'bold', halign: 'left' } },
+          '',
+          '',
+          { content: fmt(sumExcl), styles: { fontStyle: 'bold', halign: 'right' } },
+          '',
+          { content: fmt(finalTax), styles: { fontStyle: 'bold', halign: 'right' } },
+          { content: fmt(sumIncl), styles: { fontStyle: 'bold', halign: 'right' } }
+        ]
+      ],
+      theme: 'grid',
+      styles: {
+        fontSize: 6.5,
+        font: 'times',
+        cellPadding: { top: 0.5, bottom: 0.5, left: 0.7, right: 0.7 },
+        valign: 'middle',
+        textColor: [15, 23, 42],
+        lineColor: [30, 41, 59],
+        lineWidth: 0.12
+      },
+      headStyles: { fillColor: [200, 206, 214], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6.5 },
+      footStyles: { fillColor: [255, 255, 255], textColor: [15, 23, 42], fontSize: 6.5 },
+      columnStyles: {
+        0: { cellWidth: contentW * 0.28, halign: 'left' },
+        1: { cellWidth: contentW * 0.07, halign: 'right' },
+        2: { cellWidth: contentW * 0.12, halign: 'right' },
+        3: { cellWidth: contentW * 0.15, halign: 'right' },
+        4: { cellWidth: contentW * 0.1, halign: 'center' },
+        5: { cellWidth: contentW * 0.13, halign: 'right' },
+        6: { cellWidth: contentW * 0.15, halign: 'right' }
+      },
+      margin: { top: 56, left: side, right: side, bottom: 42 },
+      tableWidth: contentW
+    });
+
+    let footY = ((doc as any).lastAutoTable?.finalY as number) + 5;
+    const pageHeight = doc.internal.pageSize.getHeight();
+    if (footY + 55 > pageHeight - 15) {
+      doc.addPage();
+      footY = 56;
+    }
+    doc.setFont('times', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    const netInclLine = `Net Sales Tax Inclusive Value = ${fmt(sumIncl)}`;
+    const saleTaxLine = `Sale Tax Rs. = ${fmt(sumTax)}`;
+    doc.text(netInclLine, side + contentW, footY, { align: 'right' });
+    footY += 7;
+    doc.text(saleTaxLine, side + contentW, footY, { align: 'right' });
+    footY += 11;
+    const fillUnderscoresShort = (label: string, y: number, bold: boolean) => {
+      doc.setFont('times', bold ? 'bold' : 'normal');
+      doc.setFontSize(8);
+      const gap = ' ';
+      doc.text(label + gap, side, y);
+      const xAfterLabel = side + doc.getTextWidth(label + gap);
+      const maxX = xAfterLabel + contentW / 3;
+      let underscores = '';
+      while (xAfterLabel + doc.getTextWidth(underscores + '_') <= maxX) {
+        underscores += '_';
+      }
+      doc.text(underscores, xAfterLabel, y);
+    };
+    doc.setTextColor(15, 23, 42);
+    fillUnderscoresShort('Signature:', footY, false);
+    footY += 14;
+    fillUnderscoresShort('Stamp:', footY, false);
+    footY += 14;
+    fillUnderscoresShort('Proprietor:', footY, true);
+    doc.setTextColor(0, 0, 0);
+
+    // Add Page Numbers to the Invoice PDF
+    const totalInvoicePages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalInvoicePages; i++) {
+      doc.setPage(i);
+      doc.setFont('times', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Page ${i} of ${totalInvoicePages}`, side, doc.internal.pageSize.getHeight() - 10);
+    }
+
+    return doc;
+  }
+
   generateBill() {
     const report = this.report();
     if (!report) return;
@@ -1808,6 +2148,7 @@ export class InspectionReportViewComponent implements OnInit {
         const passedApps = (page.content || []).filter((a: any) => a.localDecision === 'PASSED');
         
         if (passedApps.length === 0) {
+          this.isGeneratingBill.set(false);
           this.snackBar.open('No passed applications found for bill generation.', 'Error', { duration: 3000 });
           return;
         }
@@ -1818,7 +2159,7 @@ export class InspectionReportViewComponent implements OnInit {
           const margin = 15;
 
           const firstApp = passedApps.length > 0 ? passedApps[0] : {};
-          const district = report.districtName || firstApp.districtName || 'N/A';
+          const billDistrict = firstApp.districtName ?? '';
           const qicDate = report.submittedAt ? new Date(report.submittedAt).toLocaleDateString('en-GB') : (report.createdAt ? new Date(report.createdAt).toLocaleDateString('en-GB') : 'N/A');
           const billDate = new Date().toLocaleDateString('en-GB');
 
@@ -1850,17 +2191,19 @@ export class InspectionReportViewComponent implements OnInit {
           doc.rect(margin, currentY, pageWidth - (margin * 2), 22);
           doc.setFont('times', 'bold');
           doc.setFontSize(10);
-          doc.text(`NTN#: __________________`, margin + 5, currentY + 7);
+          const firmNtn = report?.firmNtn ? String(report.firmNtn).trim() : '__________________';
+          const firmStrn = report?.firmStrn ? String(report.firmStrn).trim() : '__________________';
+          doc.text(`NTN#: ${firmNtn}`, margin + 5, currentY + 7);
           doc.setFontSize(15);
           doc.text(`BILL / INVOICE`, pageWidth / 2, currentY + 8, { align: 'center' });
           doc.setFontSize(11);
-          doc.text(`${district} - ${firstApp.implementName || 'N/A'}`, pageWidth / 2, currentY + 14, { align: 'center' });
+          doc.text(`${billDistrict} - ${firstApp.implementName || 'N/A'}`, pageWidth / 2, currentY + 14, { align: 'center' });
           doc.setFontSize(10);
-          doc.text(`STRN: __________________`, pageWidth - margin - 5, currentY + 7, { align: 'right' });
+          doc.text(`STRN: ${firmStrn}`, pageWidth - margin - 5, currentY + 7, { align: 'right' });
           
           // District and Implement labels (Handwritten in image)
           doc.setFontSize(11);
-          doc.text(`District: ${district}`, margin + 5, currentY + 18);
+          doc.text(`District: ${billDistrict}`, margin + 5, currentY + 18);
           doc.text(`Implement: ${firstApp.implementName || '_________________'}`, pageWidth - margin - 5, currentY + 18, { align: 'right' });
           currentY += 22;
 
@@ -1932,7 +2275,7 @@ export class InspectionReportViewComponent implements OnInit {
             styles: { fontSize: 8, font: 'times' },
             headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
             footStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold' },
-            margin: { left: margin, right: margin, bottom: 40 },
+            margin: { top: 60, left: margin, right: margin, bottom: 40 },
             didDrawPage: (data) => {
                 drawDocFooter(doc);
             }
@@ -1955,6 +2298,14 @@ export class InspectionReportViewComponent implements OnInit {
             { label: 'Farmer Share (PKR)', value: totalFarmerShare.toLocaleString() },
             { label: 'Govt. Share Balance (To be paid) (PKR)', value: totalGovtShare.toLocaleString() }
           ];
+
+          // Check if the remaining space is enough for the entire summary and footer block (approx 110mm)
+          const pageHeight = doc.internal.pageSize.getHeight();
+          if (currentY + 110 > pageHeight - 40) {
+            doc.addPage();
+            currentY = 60;
+            drawDocFooter(doc);
+          }
 
           summaryLines.forEach((line, i) => {
             doc.rect(margin + 20, currentY, pageWidth - (margin * 2) - 40, 8);
@@ -1985,10 +2336,11 @@ export class InspectionReportViewComponent implements OnInit {
             'It is requested that above mentioned amount of Subsidy i.e. (Govt. Share) may kindly be released.',
             '',
             'Following Documents are attached herewith:',
-            '1. Copy of CNIC of Winner Farmer',
-            '2. Copy of Allotment Letter',
-            '3. Copy of Delivery Challan/Farmer Acknowledgment',
-            '4. Copy of QIC Report'
+            '1. Copy of CNIC of Winner Farmer(s)',
+            '2. Copy of Allotment Letter(s)',
+            '3. Copy of Booking Receipt(s)',
+            '4. Copy of Delivery Receipt(s)',
+            '5. Copy of QIC Report'
           ];
           
           footerLines.forEach((line) => {
@@ -1996,39 +2348,52 @@ export class InspectionReportViewComponent implements OnInit {
             currentY += 5;
           });
 
+          // Add Page Numbers to the Bill PDF
+          const totalBillPages = doc.getNumberOfPages();
+          for (let i = 1; i <= totalBillPages; i++) {
+            doc.setPage(i);
+            doc.setFont('times', 'normal');
+            doc.setFontSize(8);
+            doc.setTextColor(100, 100, 100);
+            doc.text(`Page ${i} of ${totalBillPages}`, margin + 5, doc.internal.pageSize.getHeight() - 10);
+          }
+
           const pdfBlob = doc.output('blob');
           const fileName = `Bill_${report.reportNumber || 'Report'}.pdf`;
-          
-          // Trigger local download immediately
+
+          const invoiceDoc = this.buildSalesTaxInvoicePdf(report, passedApps, billDate);
+          const invoiceBlob = invoiceDoc.output('blob');
+          const invoiceFileName = `Invoice_${report.reportNumber || 'Report'}.pdf`;
+
           doc.save(fileName);
 
-          const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+          const billFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+          const invFile = new File([invoiceBlob], invoiceFileName, { type: 'application/pdf' });
 
-          this.billStep.set('Uploading bill to server...');
-          this.fileUploadService.upload(file).subscribe({
-            next: (event: any) => {
-              if (event.type === HttpEventType.Response) {
-                const fileNameFromResponse = event.body.fileName;
-                this.billStep.set('Finalizing record & transitioning status...');
-                // Update Backend
-                this.reportService.updateGeneratedBill(report.id!, fileNameFromResponse).subscribe({
-                  next: (updatedReport) => {
-                    this.initFromReport(updatedReport);
-                    this.isGeneratingBill.set(false);
-                    this.snackBar.open('Consolidated Bill Generated and Uploaded Successfully! Applications moved to DIC PENDING stage.', 'Success', { duration: 5000 });
-                  },
-                  error: (err) => {
-                    this.isGeneratingBill.set(false);
-                    this.snackBar.open('Bill uploaded but failed to update report record.', 'Partial Success', { duration: 3000 });
-                  }
-                });
+          this.billStep.set('Uploading bill and sales tax invoice...');
+          try {
+            const billPath = await this.uploadPdfGetFileName(billFile);
+            const invoicePath = await this.uploadPdfGetFileName(invFile);
+            this.billStep.set('Finalizing record & transitioning status...');
+            this.reportService.updateGeneratedBill(report.id!, billPath, invoicePath).subscribe({
+              next: (updatedReport) => {
+                this.initFromReport(updatedReport);
+                this.isGeneratingBill.set(false);
+                this.snackBar.open(
+                  'Consolidated bill and sales tax invoice generated. Use Download Invoice for letterhead printing. Applications moved to DIC PENDING.',
+                  'Success',
+                  { duration: 6000 }
+                );
+              },
+              error: () => {
+                this.isGeneratingBill.set(false);
+                this.snackBar.open('Files uploaded but failed to update report record.', 'Partial Success', { duration: 4000 });
               }
-            },
-            error: (err) => {
-              this.isGeneratingBill.set(false);
-              this.snackBar.open('Failed to upload generated bill to server.', 'Error', { duration: 3000 });
-            }
-          });
+            });
+          } catch {
+            this.isGeneratingBill.set(false);
+            this.snackBar.open('Failed to upload generated bill or invoice to server.', 'Error', { duration: 4000 });
+          }
 
         } catch (error) {
           this.isGeneratingBill.set(false);
@@ -2089,6 +2454,72 @@ export class InspectionReportViewComponent implements OnInit {
     }
 
     return str.trim();
+  }
+
+  downloadExcelList() {
+    if (!this.internalReportId) return;
+
+    this.snackBar.open(`Preparing Excel Download...`, 'Please wait', { duration: 2000 });
+    this.reportService.getReportApplications(this.internalReportId, '', 0, 10000).subscribe({
+      next: (res: any) => {
+        let apps = res.content || [];
+        if (apps.length === 0) {
+          this.snackBar.open('No applications found to download', 'OK', { duration: 3000 });
+          return;
+        }
+
+        let html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel">';
+        html += '<head><meta charset="utf-8"></head><body>';
+        html += '<table border="1">';
+        html += '<tr>';
+        
+        html += '<th>App No</th><th>Farmer Name</th><th>Father Name</th><th>CNIC</th><th>Address</th><th>District</th><th>Tehsil/Markaz</th><th>Firm Name</th><th>Implement Name</th><th>Implement ID</th><th>Tracker IMEI</th><th>Status</th>';
+        
+        html += '</tr>';
+
+        for (const app of apps) {
+          html += '<tr>';
+          const firmName = app.bookedByFirmName || this.report()?.firmName || '';
+          const farmerName = app.farmerName || '';
+          const fatherName = app.fatherName || '';
+          const cnic = app.cnic || '';
+          const implementName = app.implementName || '';
+          const implementId = app.uniqueImplementId || '';
+          const status = app.localDecision || 'PENDING';
+
+          html += `<td>${app.applicationNumber || ''}</td>`;
+          html += `<td>${farmerName}</td>`;
+          html += `<td>${fatherName}</td>`;
+          html += `<td style="mso-number-format:'\\@'">${cnic}</td>`;
+          html += `<td>${app.address || ''}</td>`;
+          html += `<td>${app.districtName || ''}</td>`;
+          html += `<td>${app.markazName || ''}</td>`;
+          html += `<td>${firmName}</td>`;
+          html += `<td>${implementName}</td>`;
+          html += `<td>${implementId}</td>`;
+          html += `<td style="mso-number-format:'\\@'">${app.trackerImei || ''}</td>`;
+          html += `<td>${status}</td>`;
+          html += '</tr>';
+        }
+
+        html += '</table></body></html>';
+
+        const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `QIC_Applications_List_${this.reportId()}.xls`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        this.snackBar.open('Excel downloaded successfully!', 'OK', { duration: 3000 });
+      },
+      error: (err) => {
+        console.error('Download error:', err);
+        this.snackBar.open('Failed to fetch data for download', 'Error', { duration: 3000 });
+      }
+    });
   }
 
   goBack() {

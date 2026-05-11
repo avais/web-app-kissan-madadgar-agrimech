@@ -49,6 +49,10 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
 
         <!-- Print Button -->
         <div class="action-toolbar no-print" *ngIf="resultData()">
+          <div class="charging-alert-web">
+            <mat-icon>battery_charging_full</mat-icon>
+            <span>{{ chargingInstructionsUrdu }}</span>
+          </div>
           <button mat-flat-button color="accent" class="journey-btn" (click)="openJourneyDialog()" *ngIf="resultData()?.hasTrackingData">
             <mat-icon>route</mat-icon>
             View Journey
@@ -104,7 +108,11 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
               </div>
               <div class="sticker-row">
                 <span class="sticker-label">Device Configuration:</span>
-                <span class="sticker-value">Tracker + Battery + Charger = 10,000 mAH</span>
+                <span class="sticker-value">Tracker + Battery + {{ resultData().charger || '17V' }} Charger = 10,000 mAH</span>
+              </div>
+              <div class="sticker-row" *ngIf="resultData().firmName">
+                <span class="sticker-label">Associated Firm:</span>
+                <span class="sticker-value">{{ resultData().firmName }}</span>
               </div>
             </div>
           </div>
@@ -127,6 +135,7 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
             <div class="sticker-divider-h"></div>
             <div class="sticker-warning">
               <p>نوٹ: سٹیکر اور QC ہٹانے سے وارنٹی ختم ہو جائے گی</p>
+              <p class="big-urdu-warning">{{ chargingInstructionsUrdu }}</p>
             </div>
           </div>
         </div>
@@ -134,6 +143,44 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
         <!-- ========== WEB DASHBOARD (hidden when printing) ========== -->
         <div class="result-section no-print" *ngIf="resultData()">
           <div class="result-grid">
+            <!-- Farmer Info (top, full width — matches public verification layout) -->
+            <mat-card class="info-card farmer-card full-width" *ngIf="resultData().isConfigured">
+              <div class="card-title"><mat-icon>person</mat-icon><span>Farmer Information</span></div>
+              <div class="info-grid farmer-info-grid">
+                <div class="info-item farmer-name-block">
+                  <span class="label">Farmer Name</span>
+                  <span class="value">{{ resultData().farmerName }}</span>
+                  <span class="label label-urdu">Farmer Name (Urdu)</span>
+                  <span class="value urdu-name" dir="rtl">{{ resultData().farmerNameUrdu || '—' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">CNIC Number</span>
+                  <span class="value">{{ resultData().farmerCnic }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">Implement</span>
+                  <span class="value">{{ resultData().implementName }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">Application No</span>
+                  <span class="value highlight">#{{ resultData().applicationNumber }}</span>
+                </div>
+                <div class="info-item" *ngIf="resultData().firmName">
+                  <span class="label">Associated Firm</span>
+                  <span class="value">{{ resultData().firmName }}</span>
+                </div>
+              </div>
+            </mat-card>
+
+            <!-- Pending -->
+            <mat-card class="info-card empty-card full-width" *ngIf="!resultData().isConfigured">
+              <div class="empty-state">
+                <mat-icon class="es-icon">pending_actions</mat-icon>
+                <h4>Pending Association</h4>
+                <p>This device is in stock. Not yet associated with a farmer application.</p>
+              </div>
+            </mat-card>
+
             <!-- QR Code -->
             <mat-card class="info-card qr-card">
               <div class="card-title"><mat-icon>qr_code_2</mat-icon><span>Verification QR</span></div>
@@ -166,40 +213,8 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
                 </div>
                 <div class="info-item">
                   <span class="label">Config</span>
-                  <span class="value">Tracker + Battery + Charger = 10,000 mAH</span>
+                  <span class="value">Tracker + Battery + {{ resultData().charger || '17V' }} Charger = 10,000 mAH</span>
                 </div>
-              </div>
-            </mat-card>
-
-            <!-- Farmer Info -->
-            <mat-card class="info-card farmer-card" *ngIf="resultData().isConfigured">
-              <div class="card-title"><mat-icon>person</mat-icon><span>Farmer Information</span></div>
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="label">Farmer Name</span>
-                  <span class="value">{{ resultData().farmerName }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">CNIC Number</span>
-                  <span class="value">{{ resultData().farmerCnic }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">Implement</span>
-                  <span class="value">{{ resultData().implementName }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">Application No</span>
-                  <span class="value highlight">#{{ resultData().applicationNumber }}</span>
-                </div>
-              </div>
-            </mat-card>
-
-            <!-- Pending -->
-            <mat-card class="info-card empty-card" *ngIf="!resultData().isConfigured">
-              <div class="empty-state">
-                <mat-icon class="es-icon">pending_actions</mat-icon>
-                <h4>Pending Association</h4>
-                <p>This device is in stock. Not yet associated with a farmer application.</p>
               </div>
             </mat-card>
 
@@ -222,7 +237,7 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
                   <div class="stat"><span class="label">Satellites</span><span class="val">{{ resultData().satellites || 0 }}</span></div>
                   <div class="stat">
                     <span class="label">Status</span>
-                    <span class="val" [class.on]="resultData().status === 'IGNITION_ON'">{{ resultData().status?.replace('_', ' ') || 'UNKNOWN' }}</span>
+                    <span class="val" [class.on]="isIgnitionOn(resultData())">{{ getIgnitionStatusLabel(resultData()) }}</span>
                   </div>
                   <div class="stat"><span class="label">Last Updated</span><span class="val">{{ resultData().timestamp ? (resultData().timestamp | date:'medium') : 'N/A' }}</span></div>
                 </div>
@@ -268,9 +283,25 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
     }
 
     .action-toolbar { 
-        display: flex; justify-content: flex-end; margin-bottom: 16px; gap: 12px;
+        display: flex; justify-content: flex-end; margin-bottom: 16px; gap: 12px; align-items: center;
         button { border-radius: 12px; font-weight: 700; display: flex; align-items: center; gap: 8px;} 
         .journey-btn { background: #3b82f6; color: white; }
+        .charging-alert-web {
+          margin-right: auto;
+          background: #fff7ed;
+          border: 3px solid #fb923c;
+          color: #9a3412;
+          padding: 12px 24px;
+          border-radius: 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-weight: 950;
+          font-size: 32px;
+          direction: rtl;
+          box-shadow: 0 4px 12px rgba(249, 115, 22, 0.1);
+          mat-icon { color: #f97316; font-size: 36px; width: 36px; height: 36px; }
+        }
     }
 
     .search-box-container {
@@ -316,10 +347,17 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
       display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
       .info-item {
         display: flex; flex-direction: column; gap: 2px;
+        min-width: 0;
         .label { font-size: 11px; color: #94a3b8; font-weight: 600; }
-        .value { font-size: 15px; font-weight: 800; color: #1e293b; }
-        .highlight { color: #3b82f6; font-family: 'JetBrains Mono', monospace; }
+        .value { font-size: 15px; font-weight: 800; color: #1e293b; word-break: break-word; overflow-wrap: anywhere; }
+        .value.urdu-name { font-weight: 700; line-height: 1.5; }
+        .highlight { color: #3b82f6; font-family: 'JetBrains Mono', monospace; word-break: break-all; }
       }
+    }
+    .farmer-info-grid { align-items: start; }
+    .farmer-name-block {
+      gap: 4px;
+      .label-urdu { margin-top: 10px; }
     }
     .implement-hero {
       display: flex; align-items: center; gap: 16px; margin-bottom: 20px;
@@ -352,12 +390,12 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
     .location-body {
       display: flex; flex-direction: column; gap: 20px;
       .address-box {
-        .address-val { font-size: 18px; font-weight: 700; color: #1e293b; margin: 0; }
-        .address-coords { font-size: 13px; color: #64748b; font-family: 'JetBrains Mono', monospace; margin: 6px 0 0; display: flex; align-items: center; gap: 4px; }
+        .address-val { font-size: 18px; font-weight: 700; color: #1e293b; margin: 0; word-break: break-word; overflow-wrap: anywhere; }
+        .address-coords { font-size: 13px; color: #64748b; font-family: 'JetBrains Mono', monospace; margin: 6px 0 0; display: flex; align-items: flex-start; gap: 4px; flex-wrap: wrap; word-break: break-all; }
       }
       .tracking-stats {
         display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
-        .stat { display: flex; flex-direction: column; gap: 2px; .val { font-size: 14px; font-weight: 700; color: #0f172a; } .on { color: #166534; } }
+        .stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; .label { word-break: break-word; } .val { font-size: 14px; font-weight: 700; color: #0f172a; word-break: break-word; } .on { color: #166534; } }
       }
     }
     .mt-24 { margin-top: 24px; }
@@ -367,9 +405,40 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
     .print-only { display: none; }
 
     @media (max-width: 768px) {
-      .result-grid { grid-template-columns: 1fr; }
-      .search-box-container .search-card form { flex-direction: column; .verify-btn { width: 100%; } }
-      .tracking-stats { grid-template-columns: 1fr 1fr !important; }
+      .container { padding: 24px 16px 64px; }
+      .header-section {
+        margin-bottom: 24px;
+        .logo-area { margin-bottom: 16px; mat-icon { font-size: 36px; width: 36px; height: 36px; } h1 { font-size: 26px; } }
+        .header-text h2 { font-size: 24px; margin-bottom: 8px; }
+        .header-text p { font-size: 14px; padding: 0 4px; }
+      }
+      .action-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        button { width: 100%; justify-content: center; box-sizing: border-box; }
+      }
+      .search-box-container { margin-bottom: 20px; }
+      .search-box-container .search-card { padding: 16px; }
+      .search-box-container .search-card form { flex-direction: column; align-items: stretch; gap: 12px; .verify-btn { width: 100%; } }
+      .error-msg { margin-bottom: 20px; font-size: 14px; }
+      .result-grid { grid-template-columns: 1fr; gap: 16px; }
+      .info-card { padding: 16px; border-radius: 16px; }
+      .qr-container .qr-img { max-width: 100%; height: auto; aspect-ratio: 1; }
+      .implement-hero { flex-wrap: wrap; gap: 12px; .implement-text { min-width: 0; flex: 1; h3 { font-size: 16px; word-break: break-word; } p { word-break: break-all; } } }
+      .location-body .address-box .address-val { font-size: 16px; }
+      .location-body .tracking-stats { grid-template-columns: 1fr 1fr !important; gap: 12px; }
+      .action-toolbar {
+        flex-direction: column-reverse;
+        .charging-alert-web { width: 100%; justify-content: center; margin: 0; box-sizing: border-box; font-size: 20px; }
+      }
+      .public-footer { padding: 24px 12px; }
+    }
+
+    @media (max-width: 480px) {
+      .info-grid { grid-template-columns: 1fr; gap: 14px; }
+      .farmer-name-block .label-urdu { margin-top: 8px; }
+      .location-body .tracking-stats { grid-template-columns: 1fr !important; }
     }
 
     /* ===== PRINT STICKER ===== */
@@ -532,6 +601,17 @@ import { MapJourneyDialogComponent } from './map-journey/map-journey-dialog.comp
           margin: 0;
           font-style: italic;
         }
+        .big-urdu-warning {
+          font-size: 28px !important;
+          font-weight: 950 !important;
+          font-style: normal !important;
+          margin-top: 15px !important;
+          border: 2.5px solid #000;
+          padding: 4px 8px;
+          text-align: center;
+          line-height: 1.2;
+          display: block;
+        }
       }
     }
   `]
@@ -546,6 +626,17 @@ export class ImeiVerificationComponent implements OnInit {
   resultData = signal<any>(null);
   errorMessage = signal<string | null>(null);
   currentAddress = signal<string | null>(null);
+
+  get chargingInstructionsUrdu(): string {
+    const data = this.resultData();
+    if (!data) return '';
+    
+    // Logic: 12V -> 5 hours, else (null/17V) -> 3 hours
+    if (data.charger?.toString().includes('12')) {
+      return 'زیادہ سے زیادہ 5 گھنٹے چارج کریں';
+    }
+    return 'زیادہ سے زیادہ 3 گھنٹے چارج کریں';
+  }
 
   verifyForm = this.fb.group({
     imei: ['', [Validators.required, Validators.pattern(/^[0-9]{15}$/)]]
@@ -618,5 +709,14 @@ export class ImeiVerificationComponent implements OnInit {
 
   printReport() {
     window.print();
+  }
+
+  isIgnitionOn(data: any): boolean {
+    const speed = Number(data?.speed ?? 0);
+    return Number.isFinite(speed) && speed > 0;
+  }
+
+  getIgnitionStatusLabel(data: any): string {
+    return this.isIgnitionOn(data) ? 'IGNITION ON' : 'IGNITION OFF';
   }
 }

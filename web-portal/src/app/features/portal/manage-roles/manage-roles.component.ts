@@ -171,28 +171,47 @@ import { Router, RouterModule } from '@angular/router';
 
     .permissions-container {
       padding: 0 28px 28px; flex-grow: 1;
-      display: flex; flex-direction: column; gap: 16px; min-height: 120px;
+      display: flex; flex-direction: column; gap: 20px; min-height: 120px;
       
       .feature-tile {
-        background: var(--tile-bg); border-radius: 16px; padding: 16px;
-        border: 1px solid var(--border-color); box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        background: #fff; border-radius: 20px; padding: 20px;
+        border: 1px solid #f1f5f9; box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        transition: transform 0.2s ease;
         
+        &:hover { transform: scale(1.01); background: #fdfdfd; }
+
         .tile-header {
-          display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
-          .parent-icon { mat-icon { font-size: 18px; width: 18px; height: 18px; } }
-          .parent-name { font-size: 13px; font-weight: 800; color: #1e293b; text-transform: uppercase; letter-spacing: 0.5px; }
+          display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+          .parent-icon { 
+            width: 32px; height: 32px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            background: currentColor; 
+            mat-icon { font-size: 18px; width: 18px; height: 18px; color: #fff; } 
+          }
+          .parent-name { font-size: 13px; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.8px; }
         }
         
         .tile-children {
-          display: flex; flex-wrap: wrap; gap: 6px;
+          display: flex; flex-wrap: wrap; gap: 8px;
           .child-chip {
-            padding: 4px 10px; border-radius: 8px; background: #f8fafc;
-            border: 1px solid #e2e8f0; font-size: 11px; font-weight: 700;
-            color: #475569; letter-spacing: 0.2px;
+            padding: 6px 14px; border-radius: 12px; background: rgba(var(--tint-rgb, 148, 163, 184), 0.08);
+            border: 1px solid rgba(var(--tint-rgb, 148, 163, 184), 0.15); font-size: 11.5px; font-weight: 700;
+            color: rgb(var(--tint-rgb, 71, 85, 105)); letter-spacing: 0.2px;
+            transition: all 0.2s ease;
+            &:hover { background: rgba(var(--tint-rgb, 148, 163, 184), 0.15); transform: translateY(-1px); }
           }
-          .no-children { font-size: 11px; color: #10b981; font-weight: 800; }
+          .no-children { 
+            font-size: 11px; color: #059669; font-weight: 800; background: #ecfdf5; 
+            padding: 4px 10px; border-radius: 8px; text-transform: uppercase;
+          }
         }
       }
+
+      /* Category Theming */
+      .feature-tile:nth-child(4n+1) { --tint-rgb: 59, 130, 246; .parent-icon { color: #3b82f6; } } /* Blue */
+      .feature-tile:nth-child(4n+2) { --tint-rgb: 139, 92, 246; .parent-icon { color: #8b5cf6; } } /* Purple */
+      .feature-tile:nth-child(4n+3) { --tint-rgb: 245, 158, 11; .parent-icon { color: #f59e0b; } }  /* Amber */
+      .feature-tile:nth-child(4n+4) { --tint-rgb: 16, 185, 129; .parent-icon { color: #10b981; } }  /* Emerald */
 
       .empty-permissions {
         height: 100px; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -200,6 +219,16 @@ import { Router, RouterModule } from '@angular/router';
         mat-icon { font-size: 32px; width: 32px; height: 32px; opacity: 0.5; }
         span { font-size: 13px; font-weight: 500; font-style: italic; }
       }
+    }
+
+    .role-card .level-badge { 
+      background: linear-gradient(135deg, #3b82f615, #3b82f625) !important;
+      color: #2563eb !important; border: 1px solid #3b82f620;
+    }
+
+    .card-actions .manage-btn { 
+      color: #3b82f6; font-weight: 800; font-size: 14px; padding: 8px 16px; border-radius: 12px;
+      &:hover { background: #eff6ff; }
     }
 
     .card-actions { 

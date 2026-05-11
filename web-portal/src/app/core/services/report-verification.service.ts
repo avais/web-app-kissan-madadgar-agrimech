@@ -19,7 +19,10 @@ export class ReportVerificationService {
     return this.http.get<ReportVerificationDto>(`${this.apiUrl}/verify-bill/${reportNumber}`);
   }
 
-  verifyDic(applicationNumber: string): Observable<ReportVerificationDto> {
-    return this.http.get<ReportVerificationDto>(`${this.apiUrl}/verify-dic/${applicationNumber}`);
+  verifyDic(applicationNumber: string, cnic?: string): Observable<ReportVerificationDto> {
+    const url = cnic 
+      ? `${this.apiUrl}/verify-dic/${applicationNumber}?cnic=${cnic}`
+      : `${this.apiUrl}/verify-dic/${applicationNumber}`;
+    return this.http.get<ReportVerificationDto>(url);
   }
 }

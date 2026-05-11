@@ -39,17 +39,25 @@ export class NotificationService {
     this.refreshUnreadCount();
   }
 
-  getNotifications(page: number = 0, size: number = 10): Observable<PaginatedNotifications> {
-    const params = new HttpParams()
+  getNotifications(page: number = 0, size: number = 10, search?: string, type?: string): Observable<PaginatedNotifications> {
+    let params = new HttpParams()
       .set('page', page.toString())
       .set('size', size.toString());
+    
+    if (search) params = params.set('search', search);
+    if (type && type !== 'ALL') params = params.set('type', type);
     
     return this.http.get<PaginatedNotifications>(this.apiUrl, { params }).pipe(
       tap(res => {
         if (page === 0) {
             this.notifications.set(res.content);
         } else {
-            this.notifications.update(current => [...current, ...res.content]);
+            // Avoid duplicates if loading same page or something
+            this.notifications.update(current => {
+                const newIds = new Set(res.content.map(n => n.id));
+                const filtered = current.filter(n => !newIds.has(n.id));
+                return [...filtered, ...res.content];
+            });
         }
       })
     );

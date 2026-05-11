@@ -11,6 +11,10 @@ export interface NavFeature {
   route: string;
   showInSideNav: boolean;
   active: boolean;
+  placement: number;
+  isParent?: boolean;
+  subFeatures?: NavFeature[];
+  isOpen?: boolean; // UI state
 }
 
 @Component({
@@ -33,13 +37,38 @@ export interface NavFeature {
 
         <!-- Dynamic Feature Links -->
         <ng-container *ngFor="let nav of dynamicNavLinks()">
-            <a *ngIf="nav.showInSideNav && nav.active" 
-               [routerLink]="nav.route" 
-               routerLinkActive="active" 
-               class="nav-link">
-              <mat-icon>{{nav.icon || 'star'}}</mat-icon>
-              <span>{{nav.name}}</span>
-            </a>
+            <!-- Case 1: Item has sub-features (Dropdown) -->
+            <ng-container *ngIf="nav.subFeatures && nav.subFeatures.length > 0; else singleLink">
+                <div class="nav-group" [class.is-open]="nav.isOpen">
+                    <button class="nav-link dropdown-toggle" (click)="toggleSubMenu(nav)">
+                        <mat-icon>{{nav.icon || 'star'}}</mat-icon>
+                        <span class="flex-1">{{nav.name}}</span>
+                        <mat-icon class="arrow">{{nav.isOpen ? 'expand_less' : 'expand_more'}}</mat-icon>
+                    </button>
+                    <div class="sub-nav" *ngIf="nav.isOpen">
+                        <ng-container *ngFor="let sub of nav.subFeatures">
+                            <a *ngIf="sub.showInSideNav && sub.active" 
+                               [routerLink]="sub.route" 
+                               routerLinkActive="active" 
+                               class="nav-link sub-link">
+                                <mat-icon class="sub-dot">fiber_manual_record</mat-icon>
+                                <span>{{sub.name}}</span>
+                            </a>
+                        </ng-container>
+                    </div>
+                </div>
+            </ng-container>
+
+            <!-- Case 2: Single Link -->
+            <ng-template #singleLink>
+                <a *ngIf="nav.showInSideNav && nav.active" 
+                   [routerLink]="nav.route" 
+                   routerLinkActive="active" 
+                   class="nav-link">
+                  <mat-icon>{{nav.icon || 'star'}}</mat-icon>
+                  <span>{{nav.name}}</span>
+                </a>
+            </ng-template>
         </ng-container>
       </nav>
 
@@ -70,6 +99,7 @@ export interface NavFeature {
       top: 0;
       box-shadow: 4px 0 24px rgba(0,0,0,0.02);
     }
+    .flex-1 { flex: 1; }
     .logo-section {
       padding: 32px 24px;
       display: flex;
@@ -83,7 +113,7 @@ export interface NavFeature {
     }
     .nav-links {
       flex: 1;
-      padding: 0 16px;
+      padding: 0 12px;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -100,35 +130,52 @@ export interface NavFeature {
       display: flex;
       align-items: center;
       gap: 14px;
-      padding: 14px 16px;
+      padding: 12px 14px;
       text-decoration: none;
       color: #64748b;
-      border-radius: 14px;
+      border-radius: 12px;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       font-weight: 600;
-      font-size: 14.5px;
-      mat-icon { font-size: 22px; width: 22px; height: 22px; transition: all 0.3s; }
+      font-size: 14px;
+      width: 100%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+
+      mat-icon { font-size: 20px; width: 20px; height: 20px; transition: all 0.3s; }
+      .arrow { font-size: 18px; width: 18px; height: 18px; color: #cbd5e1; }
       
       &:hover {
         background: #f8fafc;
         color: #10b981;
-        transform: translateX(4px);
+        .arrow { color: #10b981; }
       }
       &.active {
-        background: #10b98115;
+        background: #10b98110;
         color: #10b981;
         position: relative;
-        &::after {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 12px;
-            bottom: 12px;
-            width: 4px;
-            background: #10b981;
-            border-radius: 0 4px 4px 0;
-        }
+        font-weight: 700;
       }
+    }
+    .sub-nav {
+        margin-top: 2px;
+        padding-left: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        border-left: 1px solid #f1f5f9;
+        margin-left: 24px;
+    }
+    .sub-link {
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        .sub-dot { font-size: 6px; width: 6px; height: 6px; color: #cbd5e1; margin-right: 4px; }
+        &.active {
+            .sub-dot { color: #10b981; }
+            background: transparent;
+        }
     }
     .sidebar-footer {
       padding: 16px;
@@ -169,14 +216,48 @@ export class SidebarComponent implements OnInit {
     this.loadNavFeatures();
   }
 
+  toggleSubMenu(nav: NavFeature) {
+    nav.isOpen = !nav.isOpen;
+  }
+
   private loadNavFeatures() {
     const featuresStr = localStorage.getItem('user_features');
     if (featuresStr) {
       try {
-        const allFeatures: NavFeature[] = JSON.parse(featuresStr);
-        // Filter features that are meant for side nav and are parents
-        const navItems = allFeatures.filter(f => f.showInSideNav && f.active && f.name !== 'Edit Farmer Application' && f.name !== 'Farmer Application Updation');
-        this.dynamicNavLinks.set(navItems);
+        const allFeatures: any[] = JSON.parse(featuresStr);
+        
+        // Build hierarchy logic
+        const rootItems: NavFeature[] = [];
+        const featureMap = new Map<number, NavFeature>();
+
+        // Step 1: Create Map
+        allFeatures.forEach(f => {
+            featureMap.set(f.id, { ...f, subFeatures: f.subFeatures || [], isOpen: false });
+        });
+
+        // Step 2: Assemble Tree
+        allFeatures.forEach(f => {
+            const item = featureMap.get(f.id)!;
+            // If it has a parent and the parent exists in the map, don't put it in root level
+            // Note: We need to know who is a parent. 
+            // In our structure, "Main Navigation" is a parent level 1.
+            // Dashboard is a child of Main Navigation.
+            // Strategic Reporting Hub is a child of Main Navigation.
+            
+            const hasParent = allFeatures.some(p => p.subFeatures && p.subFeatures.some((s: any) => s.id === f.id));
+            // Actually, if the JSON is already nested, let's just pick the top level parents from the response.
+            // Looking at FeatureDTO, it is nested.
+        });
+
+        // Step 1: Identify root-level parents (those without a parent)
+        const rootParents = allFeatures
+            .filter(f => !allFeatures.some(p => p.subFeatures && p.subFeatures.some((s: any) => s.id === f.id)))
+            .filter(f => f.showInSideNav && f.active && f.name !== 'Edit Farmer Application' && f.name !== 'Farmer Application Updation');
+
+        // Step 2: Sort and display all root parents with their children
+        const sortedRoots = rootParents.sort((a, b) => (a.placement || 0) - (b.placement || 0));
+        this.dynamicNavLinks.set(sortedRoots);
+
       } catch (e) {
         console.error('Error parsing user features', e);
       }

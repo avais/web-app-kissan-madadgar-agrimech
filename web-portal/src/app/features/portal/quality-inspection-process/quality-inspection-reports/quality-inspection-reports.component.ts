@@ -14,7 +14,12 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { Subject, debounceTime, distinctUntilChanged, finalize } from 'rxjs';
 import { InspectionQICReportService, InspectionQICReportPayload } from '../../../../core/services/inspection-qic-report.service';
 import { AuthService } from '../../../../core/services/auth.service';
+import { MatSelectModule } from '@angular/material/select';
+import { DistrictService, District } from '../../../../core/services/district.service';
+import { FirmService } from '../../../../core/services/firm.service';
+import { Firm } from '../../../../core/models/firm.model';
 import { computed } from '@angular/core';
+import { ReportStateService } from '../../../../core/services/report-state.service';
 
 @Component({
   selector: 'app-quality-inspection-reports',
@@ -30,7 +35,8 @@ import { computed } from '@angular/core';
     MatTooltipModule,
     MatChipsModule,
     FormsModule,
-    MatProgressBarModule
+    MatProgressBarModule,
+    MatSelectModule
   ],
   template: `
     <div class="reports-container">
@@ -45,10 +51,37 @@ import { computed } from '@angular/core';
           </div>
           
           <div class="actions-section">
-            <div class="search-box">
-              <mat-icon>search</mat-icon>
-              <input type="text" placeholder="Search Report #..." 
-                     [(ngModel)]="searchQuery" (ngModelChange)="onSearchChange()">
+            <div class="filters-row">
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>Status</mat-label>
+                <mat-select [(ngModel)]="selectedStatus" (selectionChange)="onFilterChange()">
+                  <mat-option value="">All Statuses</mat-option>
+                  <mat-option value="SENT_TO_CONVENER">Sent to Convener</mat-option>
+                  <mat-option value="APPROVED">Approved</mat-option>
+                </mat-select>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>District</mat-label>
+                <mat-select [(ngModel)]="selectedDistrictId" (selectionChange)="onFilterChange()">
+                  <mat-option [value]="null">All Districts</mat-option>
+                  <mat-option *ngFor="let dist of districts()" [value]="dist.id">{{ dist.name }}</mat-option>
+                </mat-select>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="filter-field" *ngIf="!isFirmUser()">
+                <mat-label>Firm Name</mat-label>
+                <mat-select [(ngModel)]="selectedFirmId" (selectionChange)="onFilterChange()">
+                  <mat-option [value]="null">All Firms</mat-option>
+                  <mat-option *ngFor="let firm of firms()" [value]="firm.id">{{ firm.name }}</mat-option>
+                </mat-select>
+              </mat-form-field>
+
+              <div class="search-box">
+                <mat-icon>search</mat-icon>
+                <input type="text" placeholder="Search Report #..." 
+                       [(ngModel)]="searchQuery" (ngModelChange)="onSearchChange()">
+              </div>
             </div>
           </div>
         </div>
@@ -60,6 +93,7 @@ import { computed } from '@angular/core';
                             style="position: absolute; top: 0; left: 0; right: 0; z-index: 10; height: 3px;">
           </mat-progress-bar>
 
+          <div class="table-scroll">
           <table mat-table [dataSource]="reports()" class="luxe-table" [class.loading-fade]="isLoading()">
             
             <ng-container matColumnDef="reportNo">
@@ -147,6 +181,7 @@ import { computed } from '@angular/core';
             <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
             <tr mat-row *matRowDef="let row; columns: displayedColumns;" (click)="viewReport(row)" class="clickable-row"></tr>
           </table>
+          </div>
 
           <div class="empty-state" *ngIf="reports().length === 0 && !isLoading()">
             <mat-icon>find_in_page</mat-icon>
@@ -155,6 +190,7 @@ import { computed } from '@angular/core';
 
           <mat-paginator [length]="totalRecords"
                          [pageSize]="pageSize"
+                         [pageIndex]="currentPage"
                          [pageSizeOptions]="[5, 10, 25, 50]"
                          (page)="onPageChange($event)"
                          aria-label="Select page">
@@ -169,6 +205,9 @@ import { computed } from '@angular/core';
     .reports-container {
       padding: 0; background: #f8fafc; min-height: 100vh;
       animation: slideIn 0.5s ease-out; font-family: 'Inter', sans-serif;
+      box-sizing: border-box;
+      max-width: 100%;
+      overflow-x: hidden;
     }
 
     .glass-header {
@@ -194,10 +233,25 @@ import { computed } from '@angular/core';
         }
       }
 
+      .actions-section {
+        display: flex; align-items: center; gap: 16px;
+      }
+
+      .filters-row {
+        display: flex; align-items: center; gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .filter-field {
+        width: 180px;
+        ::ng-deep .mat-mdc-form-field-subscript-wrapper { display: none; }
+        ::ng-deep .mat-mdc-text-field-wrapper { background: white !important; border-radius: 12px !important; }
+      }
+
       .search-box {
         background: #f1f5f9; border-radius: 16px; padding: 0 20px;
         display: flex; align-items: center; gap: 12px;
-        width: 320px; height: 52px; border: 2px solid transparent; transition: all 0.3s ease;
+        width: 260px; height: 52px; border: 2px solid transparent; transition: all 0.3s ease;
         &:focus-within { border-color: #3b82f6; background: white; box-shadow: 0 10px 30px rgba(59,130,246,0.1); }
         mat-icon { color: #94a3b8; font-size: 20px; }
         input { border: none; background: transparent; outline: none; width: 100%; font-size: 14px; font-weight: 600; color: #1e293b; }
@@ -206,19 +260,41 @@ import { computed } from '@angular/core';
 
     .content-area {
       max-width: 1400px; margin: 0 auto; padding: 40px;
+      box-sizing: border-box;
+      width: 100%;
     }
 
     .table-card {
       background: white; border-radius: 28px; overflow: hidden;
       box-shadow: 0 20px 60px rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.04);
       position: relative;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+
+    .table-scroll {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .luxe-table {
-      width: 100%; transition: opacity 0.3s ease;
+      width: 100%;
+      min-width: 960px;
+      table-layout: fixed;
+      transition: opacity 0.3s ease;
       &.loading-fade { opacity: 0.5; pointer-events: none; }
-      th { background: #fafafa; padding: 20px 24px; font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
-      td { padding: 20px 24px; border-bottom: 1px solid #f1f5f9; }
+      th { background: #fafafa; padding: 16px 14px; font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+      td { padding: 16px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+
+      .mat-column-reportNo { width: 120px; }
+      .mat-column-generatedAt { width: 118px; }
+      .mat-column-generatedBy { width: 22%; min-width: 160px; }
+      .mat-column-district { width: 14%; min-width: 100px; }
+      .mat-column-counts { width: 120px; }
+      .mat-column-status { width: 18%; min-width: 140px; }
+      .mat-column-actions { width: 1%; min-width: 200px; }
       
       .clickable-row {
         cursor: pointer; transition: background 0.2s ease;
@@ -233,6 +309,9 @@ import { computed } from '@angular/core';
 
       .date-cell, .user-cell {
         display: flex; flex-direction: column;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        word-break: break-word;
         strong { font-size: 14px; color: #1e293b; }
         span { font-size: 12px; color: #64748b; }
         .date { font-weight: 700; color: #1e293b; }
@@ -250,11 +329,11 @@ import { computed } from '@angular/core';
       }
 
       .status-badge {
-        display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; font-size: 11px; font-weight: 900;
-        background: #f1f5f9; color: #64748b; white-space: nowrap; transition: all 0.3s ease;
-        line-height: 1; min-height: 32px;
+        display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; font-size: 11px; font-weight: 900;
+        background: #f1f5f9; color: #64748b; white-space: normal; transition: all 0.3s ease;
+        line-height: 1.25; min-height: 32px; max-width: 100%; box-sizing: border-box;
         mat-icon { font-size: 18px; width: 18px; height: 18px; flex-shrink: 0; }
-        span { display: inline-flex; align-items: center; } /* For vertical centering */
+        span { line-height: 1.25; }
         
         &.submitted { background: #ecfdf5; color: #059669; border: 1.5px solid #dcfce7; }
         &.sent-to-convener { background: #eff6ff; color: #2563eb; border: 1.5px solid #dbeafe; }
@@ -286,7 +365,9 @@ import { computed } from '@angular/core';
         display: flex;
         align-items: center;
         justify-content: flex-end;
-        gap: 4px;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-width: 100%;
       }
       .action-btn { 
         color: #64748b; width: 40px; height: 40px; 
@@ -295,14 +376,14 @@ import { computed } from '@angular/core';
         &:hover { color: #3b82f6; background: #eff6ff; } 
       }
       .apps-btn-luxe {
-        height: 40px; border-radius: 12px; border: 1.5px solid #e2e8f0; color: #475569; font-weight: 700; font-size: 13px;
-        transition: all 0.3s ease; display: inline-flex; align-items: center; padding: 0 16px;
+        height: 36px; border-radius: 12px; border: 1.5px solid #e2e8f0; color: #475569; font-weight: 700; font-size: 12px;
+        transition: all 0.3s ease; display: inline-flex; align-items: center; padding: 0 12px; flex-shrink: 0;
         mat-icon { font-size: 18px; width: 18px; height: 18px; margin-right: 6px; }
         &:hover { background: #0f172a; color: white; border-color: #0f172a; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
       }
       .bill-btn-luxe {
-        height: 40px; border-radius: 12px; background: #10b981; color: white; font-weight: 700; font-size: 13px;
-        margin: 0 4px; transition: all 0.3s ease; border: none; padding: 0 16px; display: inline-flex; align-items: center;
+        height: 36px; border-radius: 12px; background: #10b981; color: white; font-weight: 700; font-size: 12px;
+        margin: 0; transition: all 0.3s ease; border: none; padding: 0 12px; display: inline-flex; align-items: center; flex-shrink: 0;
         mat-icon { font-size: 18px; width: 18px; height: 18px; margin-right: 6px; }
         &:hover { background: #059669; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
       }
@@ -321,24 +402,79 @@ import { computed } from '@angular/core';
 })
 export class QualityInspectionReportsComponent implements OnInit {
   private reportService = inject(InspectionQICReportService);
+  private districtService = inject(DistrictService);
+  private firmService = inject(FirmService);
   private router = inject(Router);
   private authService = inject(AuthService);
+  private stateService = inject(ReportStateService);
 
   canGenerateBill = computed(() => this.authService.hasFeature('/portal/quality-inspection/reports/bill'));
+  isFirmUser = computed(() => {
+    const role = this.authService.currentUser()?.role?.toUpperCase() || '';
+    return role === 'FIRM' || role === 'ROLE_FIRM';
+  });
 
   reports = signal<InspectionQICReportPayload[]>([]);
+  districts = signal<District[]>([]);
+  firms = signal<Firm[]>([]);
+
   isLoading = signal<boolean>(false);
   totalRecords = 0;
   pageSize = 10;
   currentPage = 0;
+  
   searchQuery = '';
+  selectedStatus = '';
+  selectedDistrictId: number | null = null;
+  selectedFirmId: number | null = null;
 
   private searchSubject = new Subject<string>();
   displayedColumns: string[] = ['reportNo', 'generatedAt', 'generatedBy', 'district', 'counts', 'status', 'actions'];
 
   ngOnInit() {
     this.setupSearch();
+    this.loadDistricts();
+    if (!this.isFirmUser()) {
+      this.loadFirms();
+    }
+
+    // Restore saved state if any
+    const savedState = this.stateService.getReportsListState();
+    if (savedState) {
+      this.searchQuery = savedState.searchQuery;
+      this.currentPage = savedState.currentPage;
+      this.pageSize = savedState.pageSize;
+      this.selectedStatus = savedState.selectedStatus;
+      this.selectedDistrictId = savedState.selectedDistrictId;
+      this.selectedFirmId = savedState.selectedFirmId;
+    }
+
     this.loadReports();
+  }
+
+  private saveCurrentState() {
+    this.stateService.saveReportsListState({
+      searchQuery: this.searchQuery,
+      currentPage: this.currentPage,
+      pageSize: this.pageSize,
+      selectedStatus: this.selectedStatus,
+      selectedDistrictId: this.selectedDistrictId,
+      selectedFirmId: this.selectedFirmId
+    });
+  }
+
+  loadDistricts() {
+    this.districtService.getDistricts().subscribe({
+      next: (data) => this.districts.set(data),
+      error: (err) => console.error('Failed to load districts', err)
+    });
+  }
+
+  loadFirms() {
+    this.firmService.getFirmsList().subscribe({
+      next: (data) => this.firms.set(data),
+      error: (err) => console.error('Failed to load firms', err)
+    });
   }
 
   private setupSearch() {
@@ -347,6 +483,7 @@ export class QualityInspectionReportsComponent implements OnInit {
       distinctUntilChanged()
     ).subscribe(() => {
       this.currentPage = 0;
+      this.saveCurrentState();
       this.loadReports();
     });
   }
@@ -355,9 +492,22 @@ export class QualityInspectionReportsComponent implements OnInit {
     this.searchSubject.next(this.searchQuery);
   }
 
+  onFilterChange() {
+    this.currentPage = 0;
+    this.saveCurrentState();
+    this.loadReports();
+  }
+
   loadReports() {
     this.isLoading.set(true);
-    this.reportService.getAllReports(this.searchQuery, this.currentPage, this.pageSize)
+    this.reportService.getAllReports(
+      this.searchQuery, 
+      this.currentPage, 
+      this.pageSize, 
+      this.selectedStatus || undefined,
+      this.selectedDistrictId || undefined,
+      this.selectedFirmId || undefined
+    )
       .pipe(finalize(() => this.isLoading.set(false)))
       .subscribe({
         next: (page: any) => {
@@ -373,6 +523,7 @@ export class QualityInspectionReportsComponent implements OnInit {
   onPageChange(event: PageEvent) {
     this.pageSize = event.pageSize;
     this.currentPage = event.pageIndex;
+    this.saveCurrentState();
     this.loadReports();
   }
 

@@ -27,6 +27,12 @@ export class FileUploadService {
     }
 
     download(fileName: string): Observable<Blob> {
+        // Strip the prefix if it's already there to prevent doubling up
+        const prefix = '/api/files/download/';
+        if (fileName.startsWith(prefix)) {
+            fileName = fileName.substring(prefix.length);
+        }
+        
         return this.http.get(`${this.baseUrl}/download/${fileName}`, {
             responseType: 'blob'
         });

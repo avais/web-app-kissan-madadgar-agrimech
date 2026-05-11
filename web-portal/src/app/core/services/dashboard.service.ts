@@ -26,17 +26,18 @@ export interface DashboardStats {
 
 export interface TrackerMapPoint {
     imei: string;
-    farmerName: string;
-    farmerCnic: string;
+    farmerName?: string;
+    farmerCnic?: string;
     latitude: number;
     longitude: number;
     lastTimestamp: string;
-    isLive: boolean;
+    isLive?: boolean;
     minutesAgo: number;
-    speed: number;
-    implementName: string;
-    applicationNumber: string;
-    districtName: string;
+    /** km/h from last telemetry; used on map when present. */
+    speed?: number;
+    implementName?: string;
+    applicationNumber?: string;
+    districtName?: string;
 }
 
 @Injectable({

@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, effect } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { MatDialogModule, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
@@ -8,15 +8,19 @@ import { MatNativeDateModule } from '@angular/material/core';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { FormsModule, ReactiveFormsModule, FormControl, FormGroup } from '@angular/forms';
+import { FormsModule, ReactiveFormsModule, FormControl } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { DragDropModule } from '@angular/cdk/drag-drop';
 import { environment } from '@env/environment';
+import { tractorMapIconLeafletOptions } from '@app/shared/map/tractor-map-marker';
 import * as L from 'leaflet';
 import 'leaflet-rotatedmarker'; // Make sure this is installed via npm install leaflet-rotatedmarker @types/leaflet-rotatedmarker
 
 export interface MapJourneyData {
   imei: string;
+  /** Shown in header when provided (e.g. from farmer application or live report). */
+  farmerName?: string;
+  cnic?: string;
 }
 
 @Component({
@@ -40,21 +44,26 @@ export interface MapJourneyData {
   template: `
     <div class="journey-dialog">
       <!-- Fullscreen Map Background -->
-      <div id="journey-map" class="map-box" [class.dark-mode]="isDarkMode()"></div>
+      <div id="journey-map" class="map-box" [class.dark-mode]="isDarkMode() && !isSatelliteView()"></div>
 
       <!-- Compact Overlay Interface (HUD Style) -->
       <div class="hud-container">
         
         <!-- Header HUD -->
-        <header class="hud-header glass">
+        <header class="hud-header glass" cdkDrag cdkDragBoundary=".journey-dialog">
             <div class="h-left">
                 <mat-icon class="pulse-icon">route</mat-icon>
                 <div class="h-txt">
                     <span class="h-title">ASSET JOURNEY EXPLORER</span>
-                    <span class="h-sub">IMEI: {{ data.imei }}</span>
+                    <span class="h-sub mono">IMEI: {{ data.imei }}</span>
+                    <span class="h-sub farmer-line" *ngIf="data.farmerName">Farmer: {{ data.farmerName }}</span>
+                    <span class="h-sub mono" *ngIf="data.cnic">CNIC: {{ data.cnic }}</span>
                 </div>
             </div>
             <div class="h-right">
+                <button mat-icon-button (click)="toggleBaseMap()" class="c-btn" [class.layer-active]="isSatelliteView()" title="{{ isSatelliteView() ? 'Street map' : 'Satellite imagery' }}">
+                    <mat-icon>{{ isSatelliteView() ? 'map' : 'satellite_alt' }}</mat-icon>
+                </button>
                 <button mat-icon-button (click)="toggleTheme()" class="c-btn" title="Toggle Map Theme">
                     <mat-icon>{{ isDarkMode() ? 'light_mode' : 'dark_mode' }}</mat-icon>
                 </button>
@@ -62,55 +71,62 @@ export interface MapJourneyData {
             </div>
         </header>
 
-        <!-- Time Controls HUD -->
-        <div class="time-controls glass">
-            <div class="preset-filters">
-                <button mat-flat-button [class.active-filter]="activeFilter() === 'today'" (click)="setFilter('today')">Today</button>
-                <button mat-flat-button [class.active-filter]="activeFilter() === 'week'" (click)="setFilter('week')">Last Week</button>
-                <button mat-flat-button [class.active-filter]="activeFilter() === 'month'" (click)="setFilter('month')">Last 1 Month</button>
-                <button mat-flat-button [class.active-filter]="activeFilter() === '6months'" (click)="setFilter('6months')">Last 6 Months</button>
-                <button mat-flat-button [class.active-filter]="activeFilter() === 'year'" (click)="setFilter('year')">Year</button>
-                <div class="custom-range-toggle">
-                    <button mat-icon-button [class.active-filter]="activeFilter() === 'custom'" (click)="toggleCustomRange()" title="Custom Date Range">
-                        <mat-icon>date_range</mat-icon>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Custom Date Range Form -->
-            <div class="custom-date-form" *ngIf="showCustomRange()">
-                <mat-form-field appearance="outline" class="date-field">
-                    <mat-label>Start Date</mat-label>
-                    <input matInput [matDatepicker]="startPicker" [formControl]="startDateCtrl">
-                    <mat-datepicker-toggle matIconSuffix [for]="startPicker"></mat-datepicker-toggle>
-                    <mat-datepicker #startPicker></mat-datepicker>
-                </mat-form-field>
-                
-                <span class="date-separator">to</span>
-
-                <mat-form-field appearance="outline" class="date-field">
-                    <mat-label>End Date</mat-label>
-                    <input matInput [matDatepicker]="endPicker" [formControl]="endDateCtrl">
-                    <mat-datepicker-toggle matIconSuffix [for]="endPicker"></mat-datepicker-toggle>
-                    <mat-datepicker #endPicker></mat-datepicker>
-                </mat-form-field>
-
-                <button mat-flat-button class="apply-btn" (click)="applyCustomRange()" [disabled]="!startDateCtrl.value || !endDateCtrl.value">Apply</button>
-            </div>
-        </div>
-
-        <!-- Telemetry HUD & Playback Controls -->
-        <div class="playback-hud glass" *ngIf="journeyData().length > 0" cdkDrag cdkDragBoundary=".journey-dialog">
-            
-            <div class="hud-drag-handle" cdkDragHandle>
+        <!-- Bottom dock: date range + playback (single panel — frees map area) -->
+        <div class="playback-hud glass" cdkDrag cdkDragBoundary=".journey-dialog">
+            <div class="hud-drag-handle">
                 <mat-icon class="drag-icon">drag_indicator</mat-icon>
-                <div class="drag-title">Playback Controls</div>
-                <button mat-icon-button class="collapse-btn" (click)="togglePanel()" [title]="isPanelCollapsed() ? 'Expand' : 'Collapse'">
-                    <mat-icon>{{ isPanelCollapsed() ? 'expand_less' : 'expand_more' }}</mat-icon>
+                <div class="drag-title">Journey</div>
+                <button *ngIf="journeyData().length > 0" mat-icon-button class="collapse-btn" (click)="togglePanel()" [title]="isPanelCollapsed() ? 'Expand timeline, presets & playback' : 'Compact view (range + key stats)'">
+                    <mat-icon>{{ isPanelCollapsed() ? 'expand_more' : 'expand_less' }}</mat-icon>
                 </button>
             </div>
 
-            <div class="hud-body" *ngIf="!isPanelCollapsed()">
+            <div class="dock-date-section">
+                <div class="collapsed-journey-strip" *ngIf="journeyData().length > 0 && isPanelCollapsed()">
+                    <span class="c-range-pill" [title]="activeRangeTitle()">{{ activeRangeLabel() }}</span>
+                    <span class="c-sep" aria-hidden="true"></span>
+                    <span class="c-stat"><span class="c-lbl">Dist</span> <span class="c-num">{{ totalDistanceKm() | number:'1.2-2' }}</span><span class="c-unit">km</span></span>
+                    <span class="c-sep" aria-hidden="true"></span>
+                    <span class="c-stat"><span class="c-lbl">Speed</span> <span class="c-num">{{ currentSpeedKmh() | number:'1.0-0' }}</span><span class="c-unit">km/h</span></span>
+                    <span class="c-sep" aria-hidden="true"></span>
+                    <span class="c-stat"><span class="c-lbl">Top</span> <span class="c-num">{{ topSpeed() | number:'1.0-0' }}</span><span class="c-unit">km/h</span></span>
+                    <span class="c-sep" aria-hidden="true"></span>
+                    <span class="c-stat"><span class="c-lbl">Min</span> <span class="c-num">{{ minSpeed() | number:'1.0-0' }}</span><span class="c-unit">km/h</span></span>
+                    <span class="c-sep" aria-hidden="true"></span>
+                    <span class="c-stat c-acres"><span class="c-lbl">Acres</span> <span class="c-num">{{ estArea() | number:'1.2-2' }}</span></span>
+                </div>
+
+                <ng-container *ngIf="journeyData().length === 0 || !isPanelCollapsed()">
+                    <div class="preset-filters compact">
+                        <button mat-flat-button type="button" [class.active-filter]="activeFilter() === 'today'" (click)="setFilter('today')" title="From midnight today">Today</button>
+                        <button mat-flat-button type="button" [class.active-filter]="activeFilter() === 'week'" (click)="setFilter('week')" title="Last 7 days">7d</button>
+                        <button mat-flat-button type="button" [class.active-filter]="activeFilter() === 'month'" (click)="setFilter('month')" title="Last month">1 mo</button>
+                        <button mat-flat-button type="button" [class.active-filter]="activeFilter() === '6months'" (click)="setFilter('6months')" title="Last 6 months">6 mo</button>
+                        <button mat-flat-button type="button" [class.active-filter]="activeFilter() === 'year'" (click)="setFilter('year')" title="Last year">1 yr</button>
+                        <button mat-icon-button type="button" class="cal-btn" [class.active-filter]="activeFilter() === 'custom'" (click)="toggleCustomRange()" title="Custom date range">
+                            <mat-icon>date_range</mat-icon>
+                        </button>
+                    </div>
+                    <div class="custom-date-form" *ngIf="showCustomRange()">
+                        <mat-form-field appearance="outline" class="date-field">
+                            <mat-label>Start</mat-label>
+                            <input matInput [matDatepicker]="startPicker" [formControl]="startDateCtrl">
+                            <mat-datepicker-toggle matIconSuffix [for]="startPicker"></mat-datepicker-toggle>
+                            <mat-datepicker #startPicker></mat-datepicker>
+                        </mat-form-field>
+                        <span class="date-separator">–</span>
+                        <mat-form-field appearance="outline" class="date-field">
+                            <mat-label>End</mat-label>
+                            <input matInput [matDatepicker]="endPicker" [formControl]="endDateCtrl">
+                            <mat-datepicker-toggle matIconSuffix [for]="endPicker"></mat-datepicker-toggle>
+                            <mat-datepicker #endPicker></mat-datepicker>
+                        </mat-form-field>
+                        <button mat-flat-button class="apply-btn" (click)="applyCustomRange()" [disabled]="!startDateCtrl.value || !endDateCtrl.value">Apply</button>
+                    </div>
+                </ng-container>
+            </div>
+
+            <div class="hud-body" *ngIf="journeyData().length > 0 && !isPanelCollapsed()">
             
             <!-- Journey Summary Stats -->
             <div class="summary-stats">
@@ -159,6 +175,7 @@ export interface MapJourneyData {
                 <input type="range" class="timeline-slider" 
                        [min]="0" [max]="journeyData().length - 1" 
                        [value]="currentPointIndex()" 
+                       (pointerdown)="$event.stopPropagation()"
                        (input)="onTimelineScrub($event)">
                 <div class="timeline-meta">
                     <span>{{ journeyData().length > 0 ? (journeyData()[0].timestamp | date:'shortDate') : '' }}</span>
@@ -186,13 +203,13 @@ export interface MapJourneyData {
                     </div>
                 </div>
                 <div class="tel-box">
-                    <mat-icon [class.active]="currentTelemetry().ignition === 1">
-                        {{ currentTelemetry().ignition === 1 ? 'key' : 'key_off' }}
+                    <mat-icon [class.active]="engineIndicatedOn(currentTelemetry())">
+                        {{ engineIndicatedOn(currentTelemetry()) ? 'key' : 'key_off' }}
                     </mat-icon>
                     <div class="tel-data">
                         <label>ENGINE</label>
-                        <span [class.active-text]="currentTelemetry().ignition === 1">
-                            {{ currentTelemetry().ignition === 1 ? 'ON' : 'OFF' }}
+                        <span [class.active-text]="engineIndicatedOn(currentTelemetry())">
+                            {{ engineIndicatedOn(currentTelemetry()) ? 'ON' : 'OFF' }}
                         </span>
                     </div>
                 </div>
@@ -253,76 +270,116 @@ export interface MapJourneyData {
 
     .hud-header {
       padding: 12px 24px; display: flex; justify-content: space-between; align-items: center;
-      width: fit-content; margin: 0 auto 0 0; min-width: 350px;
+      width: fit-content; margin: 0 auto 0 0; min-width: 350px; z-index: 6; cursor: grab;
+      align-self: flex-start;
       .h-left {
         display: flex; gap: 16px; align-items: center;
         .pulse-icon { color: #3b82f6; font-size: 28px; width: 28px; height: 28px; }
-        .h-txt { display: flex; flex-direction: column; .h-title { font-size: 15px; font-weight: 900; color: white; letter-spacing: 1px; margin-bottom: 2px;} .h-sub { font-size: 11px; color: #94a3b8; font-family: 'JetBrains Mono'; } }
+        .h-txt {
+          display: flex; flex-direction: column; gap: 2px; max-width: min(420px, 55vw);
+          .h-title { font-size: 15px; font-weight: 900; color: white; letter-spacing: 1px; margin-bottom: 2px; }
+          .h-sub { font-size: 11px; color: #94a3b8; line-height: 1.35; word-break: break-word; }
+          .h-sub.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+          .h-sub.farmer-line { font-family: inherit; font-weight: 500; color: #cbd5e1; }
+        }
       }
       .h-right { display: flex; gap: 8px; }
       .c-btn { color: #94a3b8; width: 36px; height: 36px; line-height: 36px; mat-icon { font-size: 20px; } &:hover { color: white; background: rgba(255,255,255,0.1); } }
+      .c-btn.layer-active { color: #fff; background: rgba(59, 130, 246, 0.35); mat-icon { color: #93c5fd; } }
     }
 
-    .time-controls {
-        padding: 12px 20px; width: fit-content; margin: 0;
-        
-        .preset-filters {
-            display: flex; gap: 8px; align-items: center;
-            button {
-                border-radius: 8px; background: rgba(255,255,255,0.05); color: #cbd5e1; font-weight: 600; font-size: 13px; height: 36px;
-                &.active-filter { background: #3b82f6; color: white; }
-                &:hover:not(.active-filter) { background: rgba(255,255,255,0.1); }
-            }
-            .custom-range-toggle button { width: 36px; height: 36px; mat-icon { font-size: 20px; margin-top: -4px; } }
-        }
-
-        .custom-date-form {
-            display: flex; gap: 16px; align-items: center; margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);
-            
-            ::ng-deep .mat-mdc-form-field { margin-bottom: -1.25em; width: 160px; }
-            ::ng-deep .mdc-text-field--outlined { --mdc-outlined-text-field-container-shape: 8px; }
-            ::ng-deep .mdc-text-field--outlined .mdc-notched-outline { border-color: rgba(255,255,255,0.2) !important; }
-            ::ng-deep .mdc-text-field--outlined:hover .mdc-notched-outline { border-color: rgba(255,255,255,0.4) !important; }
-            ::ng-deep .mat-mdc-form-field-focus-overlay { background-color: rgba(255,255,255,0.05); }
-            ::ng-deep .mat-mdc-input-element { color: white !important; font-size: 13px; }
-            ::ng-deep .mdc-floating-label { color: #94a3b8 !important; }
-            ::ng-deep .mat-datepicker-toggle { color: #94a3b8 !important; }
-            
-            .date-separator { color: #64748b; font-size: 13px; font-weight: 600; }
-            .apply-btn { height: 50px; border-radius: 8px; background: #10b981; color: white; font-weight: 700; margin-bottom: 6px;}
-        }
-    }
-
+    /* Do not use CSS transform for horizontal centering — CDK Drag uses transform and conflicts with boundary math. */
     .playback-hud {
-        position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
-        width: 100%; max-width: 600px; padding: 0;
-        display: flex; flex-direction: column; cursor: default;
-        &.cdk-drag-dragging { opacity: 0.9; box-shadow: 0 16px 50px rgba(0,0,0,0.6); }
+        position: absolute; bottom: 16px; left: 0; right: 0;
+        margin-left: auto; margin-right: auto;
+        width: min(720px, calc(100vw - 32px)); max-width: 720px; padding: 0; z-index: 25;
+        display: flex; flex-direction: column; cursor: grab;
+        overflow: hidden;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.78) !important;
+        &.cdk-drag-dragging { opacity: 0.95; box-shadow: 0 16px 50px rgba(0,0,0,0.6); cursor: grabbing; }
 
         .hud-drag-handle {
-            display: flex; justify-content: space-between; align-items: center; padding: 6px 16px;
+            display: flex; justify-content: space-between; align-items: center; padding: 5px 12px;
             cursor: grab; border-bottom: 1px dashed rgba(255,255,255,0.1);
             background: rgba(0,0,0,0.2); border-radius: 16px 16px 0 0;
-            .drag-icon { color: #64748b; font-size: 20px; width: 20px; height: 20px; }
+            .drag-icon { color: #64748b; font-size: 18px; width: 18px; height: 18px; }
             .drag-title { font-size: 11px; font-weight: 800; color: #cbd5e1; letter-spacing: 1px; text-transform: uppercase; flex: 1; margin-left: 8px; }
             .collapse-btn { width: 32px; height: 32px; mat-icon { font-size: 20px; color: #94a3b8; font-weight: bold; margin-top: -3px; } }
             &:active { cursor: grabbing; }
         }
 
+        .dock-date-section {
+            padding: 8px 12px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .collapsed-journey-strip {
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+            gap: 6px 4px; padding: 2px 0; row-gap: 8px;
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+        }
+        .c-range-pill {
+            font-size: 11px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+            color: #e2e8f0; background: rgba(59, 130, 246, 0.35); border: 1px solid rgba(59, 130, 246, 0.5);
+            padding: 4px 10px; border-radius: 999px; flex-shrink: 0;
+        }
+        .c-sep {
+            width: 4px; height: 4px; border-radius: 50%; background: rgba(148, 163, 184, 0.45); flex-shrink: 0;
+        }
+        .c-stat {
+            display: inline-flex; align-items: baseline; gap: 4px; flex-wrap: nowrap; font-size: 11px; color: #cbd5e1;
+            .c-lbl { font-size: 9px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }
+            .c-num { font-weight: 800; color: #f8fafc; }
+            .c-unit { font-size: 9px; font-weight: 600; color: #94a3b8; margin-left: 1px; }
+        }
+        .c-stat.c-acres .c-num { color: #6ee7b7; }
+
+        .preset-filters.compact {
+            display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center;
+            button.mat-mdc-button-base {
+                border-radius: 8px; background: rgba(255,255,255,0.06); color: #cbd5e1;
+                font-weight: 700; font-size: 12px; min-height: 30px; padding: 0 10px; line-height: 30px;
+                &.active-filter { background: #3b82f6; color: white; }
+                &:hover:not(.active-filter) { background: rgba(255,255,255,0.12); }
+            }
+            .cal-btn {
+                width: 34px; height: 34px; padding: 0; border-radius: 8px;
+                background: rgba(255,255,255,0.06); color: #cbd5e1;
+                &.active-filter { background: #3b82f6; color: white; }
+                mat-icon { font-size: 18px; width: 18px; height: 18px; margin: 0; }
+            }
+        }
+
+        .custom-date-form {
+            display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center;
+            margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08);
+            ::ng-deep .mat-mdc-form-field { margin-bottom: -1.25em; width: 132px; }
+            ::ng-deep .mdc-text-field--outlined { --mdc-outlined-text-field-container-shape: 8px; }
+            ::ng-deep .mdc-text-field--outlined .mdc-notched-outline { border-color: rgba(255,255,255,0.2) !important; }
+            ::ng-deep .mdc-text-field--outlined:hover .mdc-notched-outline { border-color: rgba(255,255,255,0.4) !important; }
+            ::ng-deep .mat-mdc-form-field-focus-overlay { background-color: rgba(255,255,255,0.05); }
+            ::ng-deep .mat-mdc-input-element { color: white !important; font-size: 12px; }
+            ::ng-deep .mdc-floating-label { color: #94a3b8 !important; font-size: 12px; }
+            ::ng-deep .mat-datepicker-toggle { color: #94a3b8 !important; }
+            .date-separator { color: #64748b; font-size: 12px; font-weight: 700; }
+            .apply-btn { height: 40px; border-radius: 8px; background: #10b981; color: white; font-weight: 700; font-size: 12px; padding: 0 14px; }
+        }
+
         .hud-body {
-            padding: 16px 24px 20px; display: flex; flex-direction: column; gap: 16px;
+            padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px;
         }
 
         .summary-stats {
-            display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
-            background: rgba(0,0,0,0.25); border-radius: 12px; padding: 12px; border: 1px solid rgba(255,255,255,0.05);
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+            background: rgba(0,0,0,0.22); border-radius: 10px; padding: 8px; border: 1px solid rgba(255,255,255,0.05);
             .s-box {
                 display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
-                mat-icon { font-size: 18px; width: 18px; height: 18px; margin-bottom: 6px; 
+                mat-icon { font-size: 16px; width: 16px; height: 16px; margin-bottom: 4px; 
                     &.c-blue { color: #3b82f6; } &.c-red { color: #ef4444; } &.c-orange { color: #f59e0b; } &.c-green { color: #10b981; }
                 }
-                .s-val { font-size: 12px; font-weight: 800; color: white; font-family: 'JetBrains Mono'; small { font-size: 9px; opacity: 0.7; margin-left:2px;} }
-                .s-lbl { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; margin-top: 4px; }
+                .s-val { font-size: 11px; font-weight: 800; color: white; font-family: 'JetBrains Mono'; small { font-size: 8px; opacity: 0.7; margin-left:2px;} }
+                .s-lbl { font-size: 8px; font-weight: 700; color: #94a3b8; letter-spacing: 0.4px; margin-top: 2px; }
             }
         }
 
@@ -330,7 +387,7 @@ export interface MapJourneyData {
             display: flex; justify-content: space-between; align-items: center;
             
             .ctrl-btn { color: white; background: rgba(255,255,255,0.1); margin-right: 8px; transition: all 0.2s;
-                &.main-ctrl { background: #3b82f6; width: 48px; height: 48px; line-height: 48px; mat-icon { font-size: 28px; width: 28px; height: 28px; margin-top: 4px; } }
+                &.main-ctrl { background: #3b82f6; width: 44px; height: 44px; line-height: 44px; mat-icon { font-size: 26px; width: 26px; height: 26px; margin-top: 4px; } }
                 &:hover:not([disabled]) { transform: scale(1.05); background: rgba(255,255,255,0.2); }
                 &.main-ctrl:hover:not([disabled]) { background: #2563eb; }
                 &[disabled] { opacity: 0.5; cursor: not-allowed; }
@@ -357,51 +414,65 @@ export interface MapJourneyData {
         .hud-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0; }
 
         .telemetry-grid {
-            display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
             .tel-box {
-                display: flex; align-items: center; gap: 12px;
-                mat-icon { font-size: 24px; width: 24px; height: 24px; color: #64748b; &.active { color: #10b981; } }
+                display: flex; align-items: center; gap: 8px;
+                mat-icon { font-size: 20px; width: 20px; height: 20px; color: #64748b; &.active { color: #10b981; } }
                 .tel-data {
                     display: flex; flex-direction: column;
-                    label { font-size: 9px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px; margin-bottom: 2px; }
-                    span { font-size: 14px; font-weight: 700; color: white; font-family: 'JetBrains Mono'; small { font-size: 10px; opacity: 0.6; } &.active-text { color: #10b981; } }
+                    label { font-size: 8px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px; margin-bottom: 2px; }
+                    span { font-size: 13px; font-weight: 700; color: white; font-family: 'JetBrains Mono'; small { font-size: 9px; opacity: 0.6; } &.active-text { color: #10b981; } }
                 }
             }
         }
 
         .addr-box {
-            display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; padding-top: 12px; border-top: 1px dashed rgba(255,255,255,0.1);
-            mat-icon { font-size: 18px; width: 18px; height: 18px; color: #f43f5e; margin-top: 2px; }
-            .addr-text { font-size: 12px; color: #cbd5e1; line-height: 1.4; flex: 1; }
+            display: flex; gap: 8px; align-items: flex-start; margin-top: 4px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1);
+            mat-icon { font-size: 16px; width: 16px; height: 16px; color: #f43f5e; margin-top: 2px; }
+            .addr-text { font-size: 11px; color: #cbd5e1; line-height: 1.4; flex: 1; }
         }
     }
 
     .status-overlay {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        z-index: 12;
         padding: 40px; text-align: center; min-width: 300px; max-width: 400px;
-        
-        display: flex; flex-direction: column; align-items: center; gap: 16px;
+        box-sizing: border-box;
+
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
 
         p { color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5; }
         h4 { color: white; font-size: 18px; font-weight: 800; margin: 0; }
         mat-icon { font-size: 48px; width: 48px; height: 48px; color: #64748b; margin-bottom: 8px; }
 
+        /* mat-spinner is block-level; flex centers it (text-align alone does not) */
+        .loading-state,
+        .empty-state,
+        .error-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            width: 100%;
+        }
+
         .error-state { mat-icon { color: #ef4444; } h4 { color: #ef4444; } }
     }
 
     /* Leaflet Overrides */
-    ::ng-deep .leaflet-control-zoom { border: none !important; border-radius: 8px !important; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important; margin-right: 24px !important; margin-top: 100px !important; }
+    ::ng-deep .leaflet-control-zoom { border: none !important; border-radius: 8px !important; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important; margin-right: 24px !important; margin-top: 72px !important; }
     ::ng-deep .leaflet-control-zoom a { background: rgba(15, 23, 42, 0.9) !important; color: #fff !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important; }
     ::ng-deep .leaflet-control-zoom a:hover { background: #3b82f6 !important; color: #fff !important; }
     
     ::ng-deep .tractor-avatar {
-        width: 40px; height: 40px; border-radius: 50%; background: #fff;
+        width: 32px; height: 32px; border-radius: 50%; background: #fff;
         display: flex; align-items: center; justify-content: center;
         box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid #3b82f6;
         transition: transform 0.2s linear;
-        img { width: 30px; height: 30px; }
+        img { width: 24px; height: 24px; }
         &::after {
-            content: ''; position: absolute; inset: -15px; border-radius: 50%;
+            content: ''; position: absolute; inset: -12px; border-radius: 50%;
             background: radial-gradient(circle, rgba(59,130,246,0.3) 0%, transparent 70%);
             z-index: -1; pointer-events: none;
         }
@@ -409,12 +480,18 @@ export interface MapJourneyData {
 
     ::ng-deep .start-marker { width: 14px; height: 14px; background: #10b981; border: 3px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
     ::ng-deep .end-marker { width: 14px; height: 14px; background: #ef4444; border: 3px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+
+    .hud-header.cdk-drag-dragging,
+    .playback-hud.cdk-drag-dragging {
+        z-index: 1000;
+    }
   `]
 })
 export class MapJourneyDialogComponent implements OnInit {
   public dialogRef = inject(MatDialogRef<MapJourneyDialogComponent>);
   public data = inject(MAT_DIALOG_DATA) as MapJourneyData;
   private http = inject(HttpClient);
+  private datePipe = inject(DatePipe);
 
   // Map state
   private map!: L.Map;
@@ -422,7 +499,11 @@ export class MapJourneyDialogComponent implements OnInit {
   private tractorMarker!: L.Marker;
   private startPointMarker: L.Marker | null = null;
   private endPointMarker: L.Marker | null = null;
+  private streetLayer!: L.TileLayer;
+  private satelliteLayer!: L.TileLayer;
   isDarkMode = signal(false);
+  /** When true, Esri World Imagery is shown instead of street tiles. */
+  isSatelliteView = signal(false);
 
   // Data state
   journeyData = signal<any[]>([]);
@@ -460,6 +541,75 @@ export class MapJourneyDialogComponent implements OnInit {
 
   toggleTheme() { this.isDarkMode.set(!this.isDarkMode()); }
   togglePanel() { this.isPanelCollapsed.set(!this.isPanelCollapsed()); }
+
+  /** Short label for the active time range (collapsed strip). */
+  activeRangeLabel(): string {
+    switch (this.activeFilter()) {
+      case 'today': return 'Today';
+      case 'week': return '7d';
+      case 'month': return '1 mo';
+      case '6months': return '6 mo';
+      case 'year': return '1 yr';
+      case 'custom': {
+        const s = this.startDateCtrl.value;
+        const e = this.endDateCtrl.value;
+        if (s && e) {
+          return `${this.datePipe.transform(s, 'mediumDate') ?? '…'} – ${this.datePipe.transform(e, 'mediumDate') ?? '…'}`;
+        }
+        return 'Custom';
+      }
+      default: return '';
+    }
+  }
+
+  /** Tooltip with full description of the range. */
+  activeRangeTitle(): string {
+    switch (this.activeFilter()) {
+      case 'today': return 'From midnight today';
+      case 'week': return 'Last 7 days';
+      case 'month': return 'Last month';
+      case '6months': return 'Last 6 months';
+      case 'year': return 'Last year';
+      case 'custom': {
+        const s = this.startDateCtrl.value;
+        const e = this.endDateCtrl.value;
+        if (s && e) {
+          return `Custom: ${this.datePipe.transform(s, 'mediumDate')} – ${this.datePipe.transform(e, 'mediumDate')}`;
+        }
+        return 'Custom date range';
+      }
+      default: return '';
+    }
+  }
+
+  /** Current point speed for collapsed HUD (km/h). */
+  currentSpeedKmh(): number {
+    const t = this.currentTelemetry();
+    if (!t || t.speed == null) return 0;
+    const n = Number(t.speed);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  toggleBaseMap() {
+    if (!this.map || !this.streetLayer || !this.satelliteLayer) return;
+    const next = !this.isSatelliteView();
+    this.isSatelliteView.set(next);
+    if (next) {
+      this.map.removeLayer(this.streetLayer);
+      this.satelliteLayer.addTo(this.map);
+    } else {
+      this.map.removeLayer(this.satelliteLayer);
+      this.streetLayer.addTo(this.map);
+    }
+  }
+
+  /** If speed > 0, engine is shown ON (movement implies running); otherwise use ignition. */
+  engineIndicatedOn(t: { ignition?: number; speed?: number } | null | undefined): boolean {
+    if (!t) return false;
+    const speed = Number(t.speed);
+    if (Number.isFinite(speed) && speed > 0) return true;
+    return t.ignition === 1;
+  }
 
   setFilter(filter: 'today' | 'week' | 'month' | '6months' | 'year' | 'custom') {
       this.activeFilter.set(filter);
@@ -617,10 +767,15 @@ export class MapJourneyDialogComponent implements OnInit {
 
       L.control.zoom({ position: 'topright' }).addTo(this.map);
 
-      // Using Google Streets/Hybrid style variant equivalent via open sources or carto
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-          maxZoom: 19
-      }).addTo(this.map);
+      this.streetLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+          maxZoom: 19,
+          subdomains: 'abcd'
+      });
+      this.satelliteLayer = L.tileLayer(
+          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          { maxZoom: 19 }
+      );
+      this.streetLayer.addTo(this.map);
   }
 
   private clearMapLayers() {
@@ -655,67 +810,7 @@ export class MapJourneyDialogComponent implements OnInit {
       const endIcon = L.divIcon({ className: 'end-marker', iconSize: [14, 14], iconAnchor: [7, 7] });
       this.endPointMarker = L.marker(pathLatLangs[pathLatLangs.length - 1], { icon: endIcon }).addTo(this.map);
 
-      // Add 3D Tractor Avatar (Rotated)
-      const tractorSvg = `
-      <svg width="68" height="68" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#16a34a"/>
-            <stop offset="100%" stop-color="#14532d"/>
-          </linearGradient>
-          <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#bae6fd"/>
-            <stop offset="100%" stop-color="#0284c7"/>
-          </linearGradient>
-          <linearGradient id="tires" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#111827"/>
-            <stop offset="50%" stop-color="#4b5563"/>
-            <stop offset="100%" stop-color="#000000"/>
-          </linearGradient>
-          <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="0" dy="6" stdDeviation="4" flood-color="#000000" flood-opacity="0.8"/>
-          </filter>
-        </defs>
-        <g filter="url(#shadow)">
-          <!-- Axles -->
-          <rect x="6" y="32" width="36" height="4" fill="#374151" rx="1"/>
-          <rect x="10" y="8" width="28" height="3" fill="#374151" rx="1"/>
-          <!-- Large Rear Tires -->
-          <rect x="2" y="24" width="10" height="20" rx="3" fill="url(#tires)"/>
-          <rect x="36" y="24" width="10" height="20" rx="3" fill="url(#tires)"/>
-          <line x1="2" y1="28" x2="12" y2="28" stroke="#000" stroke-width="1.5" opacity="0.7"/>
-          <line x1="2" y1="34" x2="12" y2="34" stroke="#000" stroke-width="1.5" opacity="0.7"/>
-          <line x1="2" y1="40" x2="12" y2="40" stroke="#000" stroke-width="1.5" opacity="0.7"/>
-          <line x1="36" y1="28" x2="46" y2="28" stroke="#000" stroke-width="1.5" opacity="0.7"/>
-          <line x1="36" y1="34" x2="46" y2="34" stroke="#000" stroke-width="1.5" opacity="0.7"/>
-          <line x1="36" y1="40" x2="46" y2="40" stroke="#000" stroke-width="1.5" opacity="0.7"/>
-          <!-- Front Small Tires -->
-          <rect x="8" y="2" width="6" height="12" rx="2" fill="url(#tires)"/>
-          <rect x="34" y="2" width="6" height="12" rx="2" fill="url(#tires)"/>
-          <!-- Engine Block -->
-          <path d="M 16 4 L 32 4 L 32 20 L 16 20 Z" fill="url(#body)" stroke="#4ade80" stroke-width="1"/>
-          <rect x="19" y="8" width="10" height="1.5" fill="#064e3b"/>
-          <rect x="19" y="12" width="10" height="1.5" fill="#064e3b"/>
-          <rect x="19" y="16" width="10" height="1.5" fill="#064e3b"/>
-          <!-- Cabin Shield -->
-          <path d="M 12 20 L 36 20 L 36 44 L 12 44 Z" fill="url(#body)" stroke="#22c55e" stroke-width="1.5"/>
-          <path d="M 15 24 L 33 24 L 33 39 L 15 39 Z" fill="url(#glass)"/>
-          <path d="M 17 26 L 31 26 L 31 37 L 17 37 Z" fill="url(#body)" stroke="#86efac" stroke-width="0.5"/>
-          <!-- Headlights -->
-          <circle cx="18" cy="4" r="2.5" fill="#fef08a"/>
-          <circle cx="30" cy="4" r="2.5" fill="#fef08a"/>
-          <!-- Taillights -->
-          <rect x="14" y="42" width="4" height="2" fill="#ef4444"/>
-          <rect x="30" y="42" width="4" height="2" fill="#ef4444"/>
-        </g>
-      </svg>
-      `;
-
-      const tractorIcon = L.icon({
-          iconUrl: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(tractorSvg),
-          iconSize: [68, 68],
-          iconAnchor: [34, 34]
-      });
+      const tractorIcon = L.icon(tractorMapIconLeafletOptions());
 
       this.tractorMarker = L.marker(pathLatLangs[0], { 
           icon: tractorIcon,

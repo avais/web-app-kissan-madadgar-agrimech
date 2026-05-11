@@ -73,8 +73,17 @@ export const routes: Routes = [
                     {
                         path: 'booking',
                         loadComponent: () => import('./features/portal/manage-bookings/manage-bookings.component').then(m => m.ManageBookingsComponent)
+                    },
+                    {
+                        path: 'subsidy-requests',
+                        redirectTo: '/portal/subsidy-requests',
+                        pathMatch: 'full'
                     }
                 ]
+            },
+            {
+                path: 'subsidy-requests',
+                loadComponent: () => import('./features/portal/manage-farmer-applications/farmer-share-release/farmer-share-release.component').then(m => m.FarmerShareReleaseRequestsComponent)
             },
             {
                 path: 'implements',
@@ -129,7 +138,24 @@ export const routes: Routes = [
             },
             {
                 path: 'reporting',
-                loadComponent: () => import('./features/portal/reporting/reporting.component').then(m => m.ReportingComponent)
+                children: [
+                    {
+                        path: '',
+                        loadComponent: () => import('./features/portal/reporting/reporting.component').then(m => m.ReportingComponent)
+                    },
+                    {
+                        path: 'regional-analytics',
+                        loadComponent: () => import('./features/portal/reporting/subs/district-report/district-report.component').then(m => m.DistrictReportComponent)
+                    },
+                    {
+                        path: 'firm-analytics',
+                        loadComponent: () => import('./features/portal/reporting/subs/firm-report/firm-report.component').then(m => m.FirmReportComponent)
+                    },
+                    {
+                        path: 'consolidated-intelligence',
+                        loadComponent: () => import('./features/portal/reporting/subs/consolidated-report/consolidated-report.component').then(m => m.ConsolidatedReportComponent)
+                    }
+                ]
             },
             {
                 path: 'machine-live-reporting',

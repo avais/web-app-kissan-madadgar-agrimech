@@ -10,7 +10,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { RouterModule, Router, ActivatedRoute } from '@angular/router';
-import { finalize } from 'rxjs';
+import { finalize, forkJoin, of, switchMap } from 'rxjs';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 
 import { UserService } from '../../../../core/services/user.service';
@@ -39,8 +39,8 @@ import { ProjectTypeService, ProjectType } from '../../../../core/services/proje
         <div class="loader-container">
           <mat-spinner diameter="50" strokeWidth="5"></mat-spinner>
           <div class="loader-text">
-            <h3>{{isEdit ? 'Updating' : 'Provisioning'}} User</h3>
-            <p>Configuring security profiles and entity links...</p>
+            <h3>{{loadingTitle()}}</h3>
+            <p>{{loadingMessage()}}</p>
           </div>
         </div>
       </div>
@@ -137,7 +137,7 @@ import { ProjectTypeService, ProjectType } from '../../../../core/services/proje
           <div class="form-grid">
             <mat-form-field appearance="outline">
               <mat-label>Assigned Role</mat-label>
-              <mat-select formControlName="roleIds" required>
+              <mat-select formControlName="roleIds" (selectionChange)="onRoleChange($event.value)" required>
                 <mat-option *ngFor="let role of roles()" [value]="role.id">{{role.name}}</mat-option>
               </mat-select>
             </mat-form-field>
@@ -158,16 +158,30 @@ import { ProjectTypeService, ProjectType } from '../../../../core/services/proje
             </mat-form-field>
           </div>
 
+          <div *ngIf="isDistrictRole()">
+            <div class="section-title">Assigned Districts (Multi-District Access)</div>
+            <p class="district-hint">Select the districts this officer will have access to. They will see farmer applications across all assigned districts.</p>
+            <div class="form-grid">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Assigned Districts</mat-label>
+                <mat-select formControlName="assignedDistrictIds" multiple required>
+                  <mat-option *ngFor="let d of allDistricts()" [value]="d.id">{{d.name}} ({{d.divisionName}})</mat-option>
+                </mat-select>
+              </mat-form-field>
+            </div>
+          </div>
+
 
           <div class="section-title" *ngIf="userForm.get('userType')?.value === 'FIRM'">Firm Association</div>
           <div class="form-grid" *ngIf="userForm.get('userType')?.value === 'FIRM'">
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Select Parent Firm</mat-label>
-              <mat-select formControlName="firmId" [required]="userForm.get('userType')?.value === 'FIRM'">
-                <mat-option *ngFor="let firm of firms()" [value]="firm.id">{{firm.name}}</mat-option>
-              </mat-select>
-              <mat-hint>This user will have access limited to this manufacturer's data.</mat-hint>
-            </mat-form-field>
+            <div class="firm-display-box full-width">
+              <div class="info">
+                <span class="label">Affiliated Manufacturing Firm</span>
+                <span class="value">{{ firmDisplayName() || 'No Firm Associated' }}</span>
+              </div>
+              <mat-icon class="lock-icon">lock</mat-icon>
+            </div>
+            <p class="firm-hint">This user's visibility and data access are strictly bound to this manufacturing entity and cannot be modified.</p>
           </div>
 
           <div class="actions">
@@ -185,9 +199,23 @@ import { ProjectTypeService, ProjectType } from '../../../../core/services/proje
     .register-container { position: relative; padding: 24px; max-width: 800px; margin: 0 auto; min-height: 400px; }
     .loader-overlay {
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(4px);
-      z-index: 100; display: flex; align-items: center; justify-content: center;
+      background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(4px);
+      z-index: 100;
       border-radius: 20px;
+    }
+    .loader-container { 
+      position: sticky; top: 40vh; transform: translateY(-50%);
+      margin: 0 auto; width: fit-content;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+      background: white; padding: 32px 48px; border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1); text-align: center;
+      animation: popIn 0.3s ease-out;
+    }
+    .loader-text h3 { margin: 0; font-size: 18px; font-weight: 800; color: #1e293b; }
+    .loader-text p { margin: 6px 0 0; font-size: 14px; color: #64748b; }
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
     }
     .header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
     .title { margin: 0; font-size: 24px; font-weight: 500; }
@@ -206,6 +234,17 @@ import { ProjectTypeService, ProjectType } from '../../../../core/services/proje
       display: flex; justify-content: space-between; align-items: center; width: 100%;
       .info { display: flex; flex-direction: column; .label { font-weight: 700; color: #334155; font-size: 13px; line-height: 1.2; } .desc { font-size: 10.5px; color: #64748b; line-height: 1.2; } }
     }
+    .firm-display-box {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 20px; background: #f1f5f9; border-radius: 12px;
+      border: 1px dashed #cbd5e1;
+      .info { display: flex; flex-direction: column; gap: 4px; }
+      .label { font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+      .value { font-size: 15px; font-weight: 700; color: #1e293b; }
+      .lock-icon { color: #94a3b8; font-size: 20px; }
+    }
+    .firm-hint { grid-column: span 2; font-size: 12px; color: #64748b; margin: -12px 0 0 4px; font-style: italic; }
+    .district-hint { font-size: 12px; color: #64748b; margin: -8px 0 12px 4px; font-style: italic; }
     mat-form-field { width: 100%; }
   `]
 })
@@ -226,6 +265,9 @@ export class RegisterUserComponent implements OnInit {
 
   userForm: FormGroup;
   isLoading = signal(false);
+  loadingTitle = signal('Loading');
+  loadingMessage = signal('Please wait...');
+  
   isDivisionLoading = signal(false);
   isDistrictLoading = signal(false);
   isTehsilLoading = signal(false);
@@ -239,6 +281,9 @@ export class RegisterUserComponent implements OnInit {
   districts = signal<District[]>([]);
   tehsils = signal<Markaz[]>([]);
   projectTypes = signal<ProjectType[]>([]);
+  firmDisplayName = signal<string | null>(null);
+  allDistricts = signal<District[]>([]);
+  isDistrictRole = signal(false);
 
 
   constructor() {
@@ -256,7 +301,8 @@ export class RegisterUserComponent implements OnInit {
       divisionId: [{ value: null, disabled: true }, Validators.required],
       districtId: [{ value: null, disabled: true }, Validators.required],
       markazId: [{ value: null, disabled: true }, Validators.required],
-      projectTypeIds: [[], Validators.required]
+      projectTypeIds: [[], Validators.required],
+      assignedDistrictIds: [[]]
     });
 
   }
@@ -279,9 +325,18 @@ export class RegisterUserComponent implements OnInit {
 
   loadMetadata() {
     this.roleService.getRoles().subscribe(data => this.roles.set(data));
-    this.firmService.getFirms(0, 500).subscribe(data => this.firms.set(data.content));
     this.regionService.getRegions().subscribe(data => this.regions.set(data));
     this.projectTypeService.getProjectTypes().subscribe(data => this.projectTypes.set(data));
+    this.districtService.getDistricts().subscribe(data => this.allDistricts.set(data));
+  }
+
+  onRoleChange(roleId: number) {
+    const role = this.roles().find(r => r.id === roleId);
+    const isDistrict = role ? role.name.toLowerCase().includes('district') : false;
+    this.isDistrictRole.set(isDistrict);
+    if (!isDistrict) {
+      this.userForm.patchValue({ assignedDistrictIds: [] });
+    }
   }
 
 
@@ -313,29 +368,43 @@ export class RegisterUserComponent implements OnInit {
   }
 
   loadUser(id: number) {
+    this.loadingTitle.set('Retrieving Profile');
+    this.loadingMessage.set('Fetching user and location data...');
     this.isLoading.set(true);
-    this.userService.getUserById(id)
-      .pipe(finalize(() => this.isLoading.set(false)))
-      .subscribe((user: User) => {
-        if (user.regionId) {
-          this.divisionService.getDivisionsByRegion(user.regionId).subscribe(data => {
-            this.divisions.set(data);
-            this.userForm.get('divisionId')?.enable();
-          });
-        }
-        if (user.divisionId) {
-          this.districtService.getDistrictsByDivision(user.divisionId).subscribe(data => {
-            this.districts.set(data);
-            this.userForm.get('districtId')?.enable();
-          });
-        }
-        if (user.districtId) {
-          this.markazService.getMarkazByDistrict(user.districtId).subscribe(data => {
-            this.tehsils.set(data);
-            this.userForm.get('markazId')?.enable();
-          });
+
+    this.userService.getUserById(id).pipe(
+      switchMap((user: User) => {
+        const profile$ = of(user);
+
+        // Fetch all dependencies if they exist, otherwise return empty arrays
+        const divisions$ = user.regionId ? this.divisionService.getDivisionsByRegion(user.regionId) : of([]);
+        const districts$ = user.divisionId ? this.districtService.getDistrictsByDivision(user.divisionId) : of([]);
+        const tehsils$ = user.districtId ? this.markazService.getMarkazByDistrict(user.districtId) : of([]);
+
+        return forkJoin([profile$, divisions$, districts$, tehsils$]);
+      }),
+      finalize(() => this.isLoading.set(false))
+    ).subscribe({
+      next: ([user, divisions, districts, tehsils]) => {
+        // Set all signals first so they are ready for template binding
+        this.divisions.set(divisions);
+        this.districts.set(districts);
+        this.tehsils.set(tehsils);
+        this.firmDisplayName.set(user.firmName || null);
+
+        // Enable necessary controls
+        if (user.regionId) this.userForm.get('divisionId')?.enable();
+        if (user.divisionId) this.userForm.get('districtId')?.enable();
+        if (user.districtId) this.userForm.get('markazId')?.enable();
+
+        // Detect district role for multi-district panel
+        const selectedRoleId = user.roleIds?.[0];
+        if (selectedRoleId) {
+          const role = this.roles().find(r => r.id === selectedRoleId);
+          this.isDistrictRole.set(role ? role.name.toLowerCase().includes('district') : false);
         }
 
+        // Patch form data
         this.userForm.patchValue({
           username: user.username,
           roleIds: user.roleIds?.[0],
@@ -350,14 +419,21 @@ export class RegisterUserComponent implements OnInit {
           divisionId: user.divisionId,
           districtId: user.districtId,
           markazId: user.markazId,
-          projectTypeIds: user.projectTypeIds
+          projectTypeIds: user.projectTypeIds,
+          assignedDistrictIds: user.assignedDistrictIds || []
         });
-
-      });
+      },
+      error: () => {
+        this.snackBar.open('Unable to retrieve identity data.', 'Close', { duration: 3000 });
+        this.router.navigate(['/portal/users']);
+      }
+    });
   }
 
   onSubmit() {
     if (this.userForm.valid) {
+      this.loadingTitle.set(this.isEdit ? 'Updating Account' : 'Provisioning Account');
+      this.loadingMessage.set(this.isEdit ? 'Saving changes to the secure directory...' : 'Establishing new user protocols...');
       this.isLoading.set(true);
       const data = this.userForm.getRawValue();
       

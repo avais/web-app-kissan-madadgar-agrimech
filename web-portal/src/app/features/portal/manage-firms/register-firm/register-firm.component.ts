@@ -73,6 +73,18 @@ import { User } from '../../../../core/models/user.model';
               <input matInput formControlName="phone" placeholder="e.g. +92 3XX XXXXXXX">
             </mat-form-field>
 
+            <mat-form-field appearance="outline">
+              <mat-label>NTN (National Tax No.)</mat-label>
+              <input matInput formControlName="ntn" placeholder="e.g. 3348533-0">
+              <mat-hint>FBR national tax number</mat-hint>
+            </mat-form-field>
+
+            <mat-form-field appearance="outline">
+              <mat-label>STRN (Sales Tax Reg. No.)</mat-label>
+              <input matInput formControlName="strn" placeholder="e.g. 3277876295935">
+              <mat-hint>Sales tax registration</mat-hint>
+            </mat-form-field>
+
             <div class="settings-panel">
               <div class="setting-item" [class.is-active]="firmForm.get('active')?.value">
                 <div class="info">
@@ -335,6 +347,8 @@ export class RegisterFirmComponent implements OnInit {
       email: ['', [Validators.required, Validators.email]],
       address: [''],
       phone: [''],
+      ntn: [''],
+      strn: [''],
       active: [true],
       regionId: [null, Validators.required],
       divisionId: [{ value: null, disabled: true }, Validators.required],
@@ -368,6 +382,8 @@ export class RegisterFirmComponent implements OnInit {
             email: firm.email,
             address: firm.address,
             phone: firm.phone,
+            ntn: firm.ntn ?? '',
+            strn: firm.strn ?? '',
             active: firm.active,
             convenerId: firm.convenerId,
             interestedDistrictIds: firm.interestedDistrictIds,

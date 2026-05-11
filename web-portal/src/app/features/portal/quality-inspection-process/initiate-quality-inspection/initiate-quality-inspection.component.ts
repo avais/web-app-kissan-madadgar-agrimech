@@ -121,8 +121,9 @@ import { forkJoin, map, switchMap, catchError, of } from 'rxjs';
                     </div>
                   <div class="header-actions">
                       <button mat-flat-button class="attach-tracker-btn" 
+                              [class.attached]="!!app.trackerImei"
                               (click)="attachTracker(app); $event.stopPropagation()">
-                          <mat-icon>add_link</mat-icon>
+                          <mat-icon>{{ app.trackerImei ? 'check_circle' : 'add_link' }}</mat-icon>
                           <span>{{ app.trackerImei ? 'Tracker Attached' : 'Attach Tracker' }}</span>
                       </button>
                       <div class="status-chip" [attr.data-status]="app.status">
@@ -382,6 +383,7 @@ import { forkJoin, map, switchMap, catchError, of } from 'rxjs';
              gap: 6px; line-height: 1; transition: all 0.3s;
              mat-icon { font-size: 16px; width: 16px; height: 16px; margin: 0; }
              &:hover { background: #3b82f6; transform: scale(1.05); }
+             &.attached { background: #10b981; &:hover { background: #059669; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); } }
          }
 
         .implement-info {
@@ -523,6 +525,7 @@ export class InitiateQualityInspectionComponent implements OnInit {
   pageIndex = 0;
 
   selectedApps = signal<Set<number>>(new Set());
+  selectedAppObjects = new Map<number, FarmerApplicationPayload>();
   qrCodes = signal<Record<number, string>>({});
   currentStep = signal(1);
 
@@ -545,6 +548,7 @@ export class InitiateQualityInspectionComponent implements OnInit {
 
   onDistrictChange() {
     this.selectedApps.set(new Set()); 
+    this.selectedAppObjects.clear();
     this.pageIndex = 0;
     this.loadApplications();
   }
@@ -606,15 +610,16 @@ export class InitiateQualityInspectionComponent implements OnInit {
     const current = new Set(this.selectedApps());
     if (current.has(app.id)) {
       current.delete(app.id);
+      this.selectedAppObjects.delete(app.id);
     } else {
       current.add(app.id);
+      this.selectedAppObjects.set(app.id, app);
     }
     this.selectedApps.set(current);
   }
 
   getSelectedAppsData() {
-    const selectedIds = Array.from(this.selectedApps());
-    return this.applications().filter(a => selectedIds.includes(a.id!));
+    return Array.from(this.selectedAppObjects.values());
   }
 
   proceedToSubmission() {
@@ -667,6 +672,7 @@ export class InitiateQualityInspectionComponent implements OnInit {
       next: (report) => {
         this.snackBar.open(`QIC Report ${report.reportNumber} created successfully and sent to QIC.`, 'Success', { duration: 5000 });
         this.selectedApps.set(new Set());
+        this.selectedAppObjects.clear();
         this.currentStep.set(1);
         this.loadApplications();
         // Redirect to reports
@@ -695,6 +701,7 @@ export class InitiateQualityInspectionComponent implements OnInit {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
+        this.pageIndex = 0;
         this.loadApplications();
       }
     });

@@ -7,6 +7,7 @@ export interface ReportVerificationDto {
     divisionName?: string;
     status?: string;
     isValid: boolean;
+    requiresCnic?: boolean;
     
     // For single app (DIC)
     applicationNumber?: string;

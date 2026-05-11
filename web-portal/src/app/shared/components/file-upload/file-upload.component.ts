@@ -40,12 +40,12 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
   styles: [`
     .file-upload-container {
       border: 2px dashed #e2e8f0;
-      border-radius: 16px;
-      padding: 24px;
+      border-radius: 12px;
+      padding: 14px;
       background: #f8fafc;
       transition: all 0.3s ease;
       position: relative;
-      margin: 10px 0;
+      margin: 6px 0;
 
       &.dragging {
         border-color: #3b82f6;
@@ -57,13 +57,13 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 16px;
+      gap: 8px;
       text-align: center;
 
       .upload-icon {
-        font-size: 48px;
-        width: 48px;
-        height: 48px;
+        font-size: 32px;
+        width: 32px;
+        height: 32px;
         color: #94a3b8;
       }
 

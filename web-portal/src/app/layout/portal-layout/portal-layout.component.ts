@@ -14,6 +14,8 @@ import { NotificationService, Notification } from '../../core/services/notificat
 import { MatBadgeModule } from '@angular/material/badge';
 import { Router } from '@angular/router';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatInputModule } from '@angular/material/input';
+import { FormsModule } from '@angular/forms';
 import { finalize } from 'rxjs';
 
 
@@ -42,7 +44,9 @@ export interface Feature {
     MatSelectModule,
     MatFormFieldModule,
     MatBadgeModule,
-    MatProgressSpinnerModule
+    MatProgressSpinnerModule,
+    MatInputModule,
+    FormsModule
   ],
 
   template: `
@@ -138,11 +142,20 @@ export interface Feature {
             </div>
           </div>
           <div class="header-right">
-            <button mat-icon-button (click)="toggleNotifPanel()" [class.pulse-bell]="notificationService.unreadCount() > 0">
-              <mat-icon [matBadge]="notificationService.unreadCount() || null" matBadgeColor="warn" matBadgeSize="small">notifications</mat-icon>
+            <button mat-icon-button (click)="toggleNotifPanel()" 
+                    [class.pulse-bell]="notificationService.unreadCount() > 0"
+                    [aria-label]="notificationService.unreadCount() > 0 ? 'Notifications, ' + notificationService.unreadCount() + ' unread' : 'No new notifications'">
+              <mat-icon [matBadge]="notificationService.unreadCount() || null" 
+                        matBadgeColor="warn" 
+                        matBadgeSize="small"
+                        aria-hidden="false">notifications</mat-icon>
             </button>
-            <button mat-icon-button [matMenuTriggerFor]="profileMenu">
-              <div class="top-avatar">{{ initials() }}</div>
+            <button
+              type="button"
+              class="profile-menu-trigger"
+              [matMenuTriggerFor]="profileMenu"
+              aria-label="Open profile menu">
+              <span class="top-avatar">{{ initials() }}</span>
             </button>
             <mat-menu #profileMenu="matMenu">
               <div class="menu-user-header">
@@ -187,8 +200,29 @@ export interface Feature {
           </button>
         </div>
 
-        <div class="slider-actions" *ngIf="notificationService.unreadCount() > 0">
-          <button mat-button (click)="markAllAsRead()" class="mark-read-all">
+        <div class="slider-actions">
+          <div class="filter-controls">
+            <mat-form-field appearance="outline" class="notif-search">
+              <mat-icon matPrefix>search</mat-icon>
+              <mat-label>Search notifications...</mat-label>
+              <input matInput (input)="onNotifSearch($event)" [value]="notifSearchTerm()">
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="notif-type">
+              <mat-label>Type</mat-label>
+              <mat-select [value]="notifTypeFilter()" (selectionChange)="onNotifFilterChange($event.value)">
+                <mat-option value="ALL">All Types</mat-option>
+                <mat-option value="QIC">QIC Notifications</mat-option>
+                <mat-option value="DIC">DIC Notifications</mat-option>
+                <mat-option value="BOOKED">Booking Notices</mat-option>
+                <mat-option value="SUCCESS">Success Updates</mat-option>
+                <mat-option value="WARNING">Action Required</mat-option>
+                <mat-option value="ERROR">Failure Alerts</mat-option>
+              </mat-select>
+            </mat-form-field>
+          </div>
+          
+          <button mat-button (click)="markAllAsRead()" class="mark-read-all" *ngIf="notificationService.unreadCount() > 0">
             <mat-icon>done_all</mat-icon>
             <span>Mark all read</span>
           </button>
@@ -401,10 +435,33 @@ export interface Feature {
       }
     }
 
+    .profile-menu-trigger {
+      border: none;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 10px;
+      line-height: 0;
+      -webkit-tap-highlight-color: transparent;
+      &:focus-visible {
+        outline: 2px solid #4CAF50;
+        outline-offset: 2px;
+      }
+    }
+
     .top-avatar {
-      width: 36px; height: 36px; border-radius: 10px; background: #4CAF50;
-      display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;
-      color: white; box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: #4CAF50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+      color: white;
+      box-shadow: none;
     }
 
     .menu-user-header {
@@ -528,8 +585,8 @@ export interface Feature {
     .notif-slider {
       position: fixed;
       top: 0;
-      right: -480px;
-      width: 480px;
+      right: -640px;
+      width: 640px;
       height: 100vh;
       background: #ffffff;
       z-index: 1501;
@@ -562,6 +619,31 @@ export interface Feature {
 
     .slider-actions {
       padding: 0 32px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+
+      .filter-controls {
+        display: flex;
+        gap: 12px;
+        
+        .notif-search { flex: 2; }
+        .notif-type { flex: 1; }
+        
+        ::ng-deep {
+          .mat-mdc-form-field-subscript-wrapper { display: none; }
+          .mat-mdc-text-field-wrapper { 
+            height: 48px !important; 
+            background: #f8fafc !important; 
+            border-radius: 12px !important; 
+            padding: 0 12px !important;
+          }
+          .mat-mdc-form-field-flex { height: 100% !important; align-items: center !important; }
+          .mat-mdc-form-field-infix { padding: 0 !important; border: none !important; min-height: unset !important; }
+          .mdc-notched-outline { display: none; }
+        }
+      }
+
       .mark-read-all {
         width: 100%; height: 44px; border-radius: 12px;
         background: #f1f5f9; color: #3b82f6; font-weight: 800; font-size: 14px;
@@ -765,6 +847,8 @@ export class PortalLayoutComponent implements OnInit {
   notifPage = signal<number>(0);
   notifLastPage = signal<boolean>(false);
   isNotifLoading = signal<boolean>(false);
+  notifSearchTerm = signal<string>('');
+  notifTypeFilter = signal<string>('ALL');
 
   initials = signal<string>('SA');
 
@@ -826,7 +910,25 @@ export class PortalLayoutComponent implements OnInit {
     const featuresStr = localStorage.getItem('user_features');
     if (featuresStr) {
       try {
-        const allFeatures: Feature[] = JSON.parse(featuresStr);
+        let allFeatures: Feature[] = JSON.parse(featuresStr);
+        
+        const userRole = (this.authService.currentUser()?.role || '').toUpperCase();
+        const isSuperAdmin = userRole.includes('SUPER_ADMIN') || userRole.includes('ADMIN_DG_OFFICE');
+
+        if (isSuperAdmin && !allFeatures.some(f => f.route === '/portal/dashboard')) {
+          allFeatures.unshift({
+            id: 0,
+            name: 'Executive Dashboard',
+            icon: 'analytics',
+            route: '/portal/dashboard',
+            isParent: true,
+            active: true,
+            showInSideNav: true,
+            placement: -1,
+            subFeatures: []
+          });
+        }
+
         // Filter only parent features and pre-filter their sub-features, then sort by placement
         const sidebarFeatures = allFeatures
           .filter(f => f.isParent && f.showInSideNav && f.active)
@@ -885,7 +987,7 @@ export class PortalLayoutComponent implements OnInit {
   loadNotifications() {
     this.notifPage.set(0);
     this.isNotifLoading.set(true);
-    this.notificationService.getNotifications(0, 5)
+    this.notificationService.getNotifications(0, 10, this.notifSearchTerm(), this.notifTypeFilter())
       .pipe(finalize(() => this.isNotifLoading.set(false)))
       .subscribe(res => {
         this.notifLastPage.set(res.last);
@@ -908,11 +1010,22 @@ export class PortalLayoutComponent implements OnInit {
     const nextPage = this.notifPage() + 1;
     this.notifPage.set(nextPage);
     this.isNotifLoading.set(true);
-    this.notificationService.getNotifications(nextPage, 5)
+    this.notificationService.getNotifications(nextPage, 10, this.notifSearchTerm(), this.notifTypeFilter())
       .pipe(finalize(() => this.isNotifLoading.set(false)))
       .subscribe(res => {
         this.notifLastPage.set(res.last);
       });
+  }
+
+  onNotifFilterChange(type: string) {
+    this.notifTypeFilter.set(type);
+    this.loadNotifications();
+  }
+
+  onNotifSearch(event: Event) {
+    const term = (event.target as HTMLInputElement).value;
+    this.notifSearchTerm.set(term);
+    this.loadNotifications();
   }
 
   hasMoreNotifications(): boolean {

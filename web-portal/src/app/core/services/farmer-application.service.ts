@@ -31,6 +31,8 @@ export interface FarmerApplicationPayload {
     districtName?: string;
     markazId: number;
     markazName?: string;
+    /** Region -> Division -> District -> Tehsil (markaz); from API when present. */
+    locationBreadcrumb?: string;
     implementId: number;
     implementName?: string;
     totalCostPrice?: number;
@@ -54,7 +56,9 @@ export interface FarmerApplicationPayload {
     status: string;
     localDecision?: string;
     createdAt?: string;
+    updatedAt?: string;
     trackerImei?: string;
+    trackerBatchNumber?: number;
     qicRemarks?: string;
     trackerPictorialEvidence?: string;
     qicReportPictorialEvidence?: string;
@@ -62,6 +66,14 @@ export interface FarmerApplicationPayload {
     trackerVerified?: boolean;
     trackerVerifiedAt?: string;
     history?: ApplicationHistoryPayload[];
+    farmerCnicFront?: string;
+    farmerCnicBack?: string;
+    allotmentLetterPath?: string;
+    dicReportPath?: string;
+    signedDicReportPath?: string;
+    esScreeningReportPath?: string;
+    signedEsScreeningReportPath?: string;
+    subsidyReleaseProofPath?: string;
 }
 
 export interface PagedResponse<T> {
@@ -70,6 +82,10 @@ export interface PagedResponse<T> {
     totalPages: number;
     size: number;
     number: number;
+}
+
+export interface CnicExistsResponse {
+    exists: boolean;
 }
 
 @Injectable({
@@ -83,6 +99,11 @@ export class FarmerApplicationService {
         return this.http.post(`${this.apiUrl}/register`, payload);
     }
 
+    checkCnicExists(cnic: string): Observable<CnicExistsResponse> {
+        const params = new HttpParams().set('cnic', cnic);
+        return this.http.get<CnicExistsResponse>(`${this.apiUrl}/exists-by-cnic`, { params });
+    }
+
     getById(id: number): Observable<FarmerApplicationPayload> {
         return this.http.get<FarmerApplicationPayload>(`${this.apiUrl}/${id}`);
     }
@@ -91,16 +112,30 @@ export class FarmerApplicationService {
         return this.http.put<FarmerApplicationPayload>(`${this.apiUrl}/${id}`, payload);
     }
 
-    allot(id: number, category: string, quotaNumber: number, date: string): Observable<FarmerApplicationPayload> {
-        let params = new HttpParams()
-            .set('category', category)
-            .set('quotaNumber', quotaNumber.toString())
-            .set('allotmentDate', date);
-        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/allot`, {}, { params });
+    ballot(id: number, category: string, ballotingDate: string): Observable<FarmerApplicationPayload> {
+        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/ballot`, { category, ballotingDate });
+    }
+
+    allot(id: number, allotmentNumber: string, category: string, quotaNumber: number, date: string, allotmentLetterPath?: string): Observable<FarmerApplicationPayload> {
+        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/allot`, {
+            allotmentNumber, category, quotaNumber: quotaNumber.toString(), allotmentDate: date, allotmentLetterPath
+        });
     }
 
     // List applications with pagination and filters
-    list(search?: string, status?: string | string[], divisionId?: number, districtId?: number, page: number = 0, size: number = 10, sort: string = 'updatedAt,desc'): Observable<PagedResponse<FarmerApplicationPayload>> {
+    list(
+        search?: string,
+        status?: string | string[],
+        divisionId?: number,
+        districtId?: number,
+        page: number = 0,
+        size: number = 10,
+        sort: string = 'updatedAt,desc',
+        regionIds?: number[],
+        divisionIds?: number[],
+        districtIds?: number[],
+        firmIds?: number[]
+    ): Observable<PagedResponse<FarmerApplicationPayload>> {
         let params = new HttpParams();
         if (search) params = params.set('search', search);
 
@@ -114,6 +149,10 @@ export class FarmerApplicationService {
 
         if (divisionId) params = params.set('divisionId', divisionId.toString());
         if (districtId) params = params.set('districtId', districtId.toString());
+        if (regionIds?.length) regionIds.forEach(id => params = params.append('regionIds', id.toString()));
+        if (divisionIds?.length) divisionIds.forEach(id => params = params.append('divisionIds', id.toString()));
+        if (districtIds?.length) districtIds.forEach(id => params = params.append('districtIds', id.toString()));
+        if (firmIds?.length) firmIds.forEach(id => params = params.append('firmIds', id.toString()));
 
         params = params.set('page', page.toString());
         params = params.set('size', size.toString());
@@ -121,8 +160,13 @@ export class FarmerApplicationService {
         return this.http.get<PagedResponse<FarmerApplicationPayload>>(this.apiUrl, { params });
     }
 
-    getSummaryCounts(): Observable<any> {
-        return this.http.get(`${this.apiUrl}/summary-counts`);
+    getSummaryCounts(regionIds?: number[], divisionIds?: number[], districtIds?: number[], firmIds?: number[]): Observable<any> {
+        let params = new HttpParams();
+        if (regionIds?.length) regionIds.forEach(id => params = params.append('regionIds', id.toString()));
+        if (divisionIds?.length) divisionIds.forEach(id => params = params.append('divisionIds', id.toString()));
+        if (districtIds?.length) districtIds.forEach(id => params = params.append('districtIds', id.toString()));
+        if (firmIds?.length) firmIds.forEach(id => params = params.append('firmIds', id.toString()));
+        return this.http.get(`${this.apiUrl}/summary-counts`, { params });
     }
 
     private cachedInspections$: Observable<any[]> | null = null;
@@ -237,8 +281,8 @@ export class FarmerApplicationService {
         return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/start-dic`, { dicReportPath });
     }
 
-    approveDic(id: number, signedDicReportPath: string): Observable<FarmerApplicationPayload> {
-        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/approve-dic`, { signedDicReportPath });
+    approveDic(id: number, signedDicReportPath: string, signedEsScreeningReportPath: string, remarks?: string): Observable<FarmerApplicationPayload> {
+        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/approve-dic`, { signedDicReportPath, signedEsScreeningReportPath, remarks });
     }
 
     rejectDic(id: number, remarks: string): Observable<FarmerApplicationPayload> {
@@ -247,5 +291,31 @@ export class FarmerApplicationService {
 
     deferDic(id: number, remarks: string): Observable<FarmerApplicationPayload> {
         return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/defer-dic`, { remarks });
+    }
+
+    updateFarmerCnic(id: number, farmerCnicFront: string, farmerCnicBack: string): Observable<FarmerApplicationPayload> {
+        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/farmer-cnic`, { farmerCnicFront, farmerCnicBack });
+    }
+
+    getDicApprovedCount(): Observable<number> {
+        return this.http.get<number>(`${this.apiUrl}/dic-approved-count`);
+    }
+
+    releaseSubsidy(id: number, remarks?: string, proofPath?: string | null, releaseDate?: string): Observable<FarmerApplicationPayload> {
+        return this.http.post<FarmerApplicationPayload>(`${this.apiUrl}/${id}/release-subsidy`, { remarks, proofPath, releaseDate });
+    }
+
+    requestFarmerShareRelease(): Observable<{message: string, reportUrl: string}> {
+        return this.http.post<{message: string, reportUrl: string}>(`${this.apiUrl}/request-farmer-share`, {});
+    }
+
+    getDownloadUrl(path: string): string {
+        if (!path) return '';
+        if (path.startsWith('http')) return path;
+        return `${environment.apiUrl}${path}`;
+    }
+
+    downloadFileBlob(url: string): Observable<Blob> {
+        return this.http.get(url, { responseType: 'blob' });
     }
 }

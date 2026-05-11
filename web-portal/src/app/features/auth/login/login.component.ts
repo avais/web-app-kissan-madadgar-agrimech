@@ -69,12 +69,17 @@ import { RouterModule } from '@angular/router';
              <h2>Punjab<span>CleanAir</span></h2>
           </div>
           
-          <div class="login-header">
+          <div class="login-header" *ngIf="!showResetPassword()">
             <h2>Welcome Back</h2>
             <p>Please enter your credentials to access the portal</p>
           </div>
 
-          <form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
+          <div class="login-header" *ngIf="showResetPassword()">
+            <h2>Reset password</h2>
+            <p>Submit your account email to reset your password. You will need new credentials from your administrator.</p>
+          </div>
+
+          <form *ngIf="!showResetPassword()" [formGroup]="loginForm" (ngSubmit)="onSubmit()">
             <mat-form-field appearance="outline" class="full-width">
               <mat-label>Email Address</mat-label>
               <input matInput formControlName="email" type="email" placeholder="name@example.com" (input)="errorMessage.set(null)">
@@ -94,7 +99,7 @@ import { RouterModule } from '@angular/router';
             </mat-form-field>
 
             <div class="actions">
-              <a href="#" class="forgot-link">Forgot Password?</a>
+              <a href="#" class="forgot-link" (click)="openResetPassword($event)">Forgot Password?</a>
             </div>
 
             <div class="captcha-container" *ngIf="captchaImage()">
@@ -123,6 +128,48 @@ import { RouterModule } from '@angular/router';
             <div class="register-hint">
               <span>New here?</span>
               <a href="#">Register as a Partner</a>
+            </div>
+          </form>
+
+          <form *ngIf="showResetPassword()" [formGroup]="resetForm" (ngSubmit)="onResetSubmit()">
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>Email Address</mat-label>
+              <input matInput formControlName="email" type="email" placeholder="name@example.com" (input)="errorMessage.set(null); resetSuccessMessage.set(null)">
+              <mat-icon matPrefix>email</mat-icon>
+              <mat-error *ngIf="resetForm.get('email')?.hasError('required')">Email is required</mat-error>
+              <mat-error *ngIf="resetForm.get('email')?.hasError('email')">Invalid email address</mat-error>
+            </mat-form-field>
+
+            <div class="captcha-container" *ngIf="captchaImage()">
+              <div class="captcha-img-box">
+                <img [src]="'data:image/png;base64,' + captchaImage()" alt="CAPTCHA">
+                <button mat-icon-button type="button" (click)="loadCaptcha()" title="Refresh CAPTCHA">
+                  <mat-icon>refresh</mat-icon>
+                </button>
+              </div>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Enter Captcha</mat-label>
+                <input matInput formControlName="captchaValue" placeholder="6-digit number" inputmode="numeric" pattern="[0-9]*" (input)="errorMessage.set(null); resetSuccessMessage.set(null)">
+                <mat-error *ngIf="resetForm.get('captchaValue')?.hasError('required')">CAPTCHA is required</mat-error>
+              </mat-form-field>
+            </div>
+
+            <div class="success-container" *ngIf="resetSuccessMessage()">
+              <mat-icon>info</mat-icon>
+              <span>{{ resetSuccessMessage() }}</span>
+            </div>
+
+            <div class="error-container" *ngIf="errorMessage()">
+              <mat-icon>error_outline</mat-icon>
+              <span>{{ errorMessage() }}</span>
+            </div>
+
+            <button mat-flat-button color="primary" class="login-btn" type="submit" [disabled]="resetForm.invalid || isLoading()">
+              {{ isLoading() ? 'Processing...' : 'Reset password' }}
+            </button>
+
+            <div class="register-hint">
+              <button mat-button type="button" class="back-login-btn" (click)="goBackToLogin()">Back to sign in</button>
             </div>
           </form>
         </div>
@@ -351,6 +398,34 @@ import { RouterModule } from '@angular/router';
       }
     }
 
+    .success-container {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: #065f46;
+      padding: 12px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.45;
+
+      mat-icon {
+        font-size: 22px;
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+        color: #059669;
+      }
+    }
+
+    .back-login-btn {
+      color: #4CAF50;
+      font-weight: 700;
+    }
+
     @keyframes slideIn {
       from { opacity: 0; transform: translateY(-10px); }
       to { opacity: 1; transform: translateY(0); }
@@ -384,10 +459,18 @@ export class LoginComponent implements OnInit {
   isLoading = signal(false);
   captchaImage = signal<string | null>(null);
   errorMessage = signal<string | null>(null);
+  resetSuccessMessage = signal<string | null>(null);
+  showResetPassword = signal(false);
 
   loginForm = this.fb.group({
     email: ['', [Validators.required, Validators.email]],
     password: ['', [Validators.required, Validators.minLength(6)]],
+    captchaValue: ['', [Validators.required]],
+    captchaId: ['']
+  });
+
+  resetForm = this.fb.group({
+    email: ['', [Validators.required, Validators.email]],
     captchaValue: ['', [Validators.required]],
     captchaId: ['']
   });
@@ -401,11 +484,57 @@ export class LoginComponent implements OnInit {
       next: (res) => {
         this.captchaImage.set(res.captchaImage);
         this.loginForm.patchValue({ captchaId: res.captchaId, captchaValue: '' });
+        this.resetForm.patchValue({ captchaId: res.captchaId, captchaValue: '' });
       },
       error: (err) => {
         console.error('Failed to load captcha', err);
       }
     });
+  }
+
+  openResetPassword(event: Event) {
+    event.preventDefault();
+    this.resetSuccessMessage.set(null);
+    this.errorMessage.set(null);
+    this.showResetPassword.set(true);
+    const loginEmail = this.loginForm.get('email')?.value;
+    this.resetForm.patchValue({ email: loginEmail || '' });
+    this.loadCaptcha();
+  }
+
+  goBackToLogin() {
+    this.showResetPassword.set(false);
+    this.resetSuccessMessage.set(null);
+    this.errorMessage.set(null);
+    this.loginForm.patchValue({ captchaValue: '' });
+    this.loadCaptcha();
+  }
+
+  onResetSubmit() {
+    if (!this.resetForm.valid) {
+      return;
+    }
+    this.isLoading.set(true);
+    this.errorMessage.set(null);
+    const { email, captchaId, captchaValue } = this.resetForm.value;
+    this.authService
+      .resetPassword({
+        email: email!,
+        captchaId: captchaId!,
+        captchaValue: captchaValue!
+      })
+      .subscribe({
+        next: (res) => {
+          this.isLoading.set(false);
+          this.resetSuccessMessage.set(res.message);
+          this.loadCaptcha();
+        },
+        error: (err) => {
+          this.isLoading.set(false);
+          this.errorMessage.set(err.error?.message || 'Request failed. Please try again.');
+          this.loadCaptcha();
+        }
+      });
   }
 
   onSubmit() {

@@ -128,7 +128,7 @@ import * as L from 'leaflet';
     .side-panel {
         position: absolute; left: 0; top: 0; bottom: 0; width: 420px;
         z-index: 10; display: flex; flex-direction: column; padding: 32px;
-        pointer-events: auto;
+        pointer-events: auto; overflow-y: auto; box-sizing: border-box;
     }
 
     .panel-header {

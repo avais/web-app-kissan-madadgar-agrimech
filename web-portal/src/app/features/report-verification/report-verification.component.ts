@@ -8,10 +8,14 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatButtonModule } from '@angular/material/button';
 import { animate, style, transition, trigger } from '@angular/animations';
 
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { FormsModule } from '@angular/forms';
+
 @Component({
   selector: 'app-report-verification',
   standalone: true,
-  imports: [CommonModule, MatIconModule, MatProgressSpinnerModule, MatButtonModule],
+  imports: [CommonModule, MatIconModule, MatProgressSpinnerModule, MatButtonModule, MatFormFieldModule, MatInputModule, FormsModule],
   template: `
     <div class="verification-page">
       <div class="background-glass"></div>
@@ -105,7 +109,32 @@ import { animate, style, transition, trigger } from '@angular/animations';
             </div>
         </div>
 
-        <div class="status-card error" *ngIf="!isLoading() && !verificationData()?.isValid" [@slideUp]="'in'">
+        <!-- CNIC PROMPT CARD -->
+        <div class="status-card cnic-prompt" *ngIf="!isLoading() && verificationData()?.requiresCnic" [@slideUp]="'in'">
+            <div class="icon-header">
+               <div class="icon-circle cnic">
+                 <mat-icon>fingerprint</mat-icon>
+               </div>
+               <div class="badge cnic">SECURITY STEP</div>
+            </div>
+            <h2 class="result-title">Identify Farmer</h2>
+            <p class="result-desc">To proceed with verification, please enter the Farmer's CNIC number associated with this application.</p>
+            
+            <div class="cnic-form">
+               <mat-form-field appearance="outline" class="full-width">
+                 <mat-label>Farmer CNIC</mat-label>
+                 <input matInput [(ngModel)]="cnicInput" name="cnic" placeholder="e.g. 3520112345678" maxlength="15" (keyup.enter)="verifyWithCnic()">
+                 <mat-icon matPrefix>badge</mat-icon>
+               </mat-form-field>
+               
+               <button mat-flat-button class="verify-btn" (click)="verifyWithCnic()" [disabled]="!cnicInput() || cnicInput().length < 10">
+                 <mat-icon>verified_user</mat-icon>
+                 SEARCH & VERIFY
+               </button>
+            </div>
+        </div>
+
+        <div class="status-card error" *ngIf="!isLoading() && !verificationData()?.isValid && !verificationData()?.requiresCnic" [@slideUp]="'in'">
             <div class="icon-header">
                <div class="icon-circle error">
                  <mat-icon>report_problem</mat-icon>
@@ -234,6 +263,21 @@ import { animate, style, transition, trigger } from '@angular/animations';
       .support-footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #fee2e2; color: #94a3b8; font-size: 13px; font-weight: 600; text-align: center; }
     }
 
+    .cnic-prompt {
+      .icon-circle.cnic { background: #fff7ed; color: #f97316; }
+      .badge.cnic { background: #f97316; }
+      .cnic-form { 
+        display: flex; flex-direction: column; gap: 15px; margin-top: 20px;
+        .full-width { width: 100%; }
+        ::ng-deep .mat-mdc-text-field-wrapper { background: #f8fafc !important; }
+        .verify-btn { 
+          height: 56px; border-radius: 16px; font-weight: 900; letter-spacing: 1px;
+          background: #0f172a !important; color: white !important;
+          mat-icon { margin-right: 8px; }
+        }
+      }
+    }
+
     .page-footer {
       text-align: center; color: rgba(255,255,255,0.4);
       .cm-logo { height: 40px; opacity: 0.3; margin-bottom: 10px; }
@@ -262,6 +306,7 @@ export class ReportVerificationComponent implements OnInit {
   verificationData = signal<ReportVerificationDto | null>(null);
   isLoading = signal(true);
   today = new Date();
+  cnicInput = signal('');
 
   ngOnInit(): void {
     this.route.queryParams.subscribe(params => {
@@ -278,7 +323,16 @@ export class ReportVerificationComponent implements OnInit {
     });
   }
 
-  verify(type: string, id: string): void {
+  verifyWithCnic(): void {
+    const params = this.route.snapshot.queryParams;
+    const type = params['type'];
+    const id = params['id'];
+    if (type && id && this.cnicInput()) {
+      this.verify(type, id, this.cnicInput());
+    }
+  }
+
+  verify(type: string, id: string, cnic?: string): void {
     this.isLoading.set(true);
     let obs$;
 
@@ -286,8 +340,8 @@ export class ReportVerificationComponent implements OnInit {
       obs$ = this.verificationService.verifyQic(id);
     } else if (type === 'BILL') {
       obs$ = this.verificationService.verifyBill(id);
-    } else if (type === 'DIC') {
-      obs$ = this.verificationService.verifyDic(id);
+    } else if (type === 'DIC' || type === 'ALLOTMENT') {
+      obs$ = this.verificationService.verifyDic(id, cnic);
     } else {
       this.isLoading.set(false);
       this.verificationData.set({ isValid: false, type: 'QIC' });

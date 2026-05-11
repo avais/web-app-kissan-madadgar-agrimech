@@ -12,7 +12,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { HttpClientModule } from '@angular/common/http';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
-import { MarkazService, Markaz } from '../../../../../core/services/markaz.service';
+import { MarkazService } from '../../../../../core/services/markaz.service';
 import { DistrictService, District } from '../../../../../core/services/district.service';
 import { finalize } from 'rxjs';
 

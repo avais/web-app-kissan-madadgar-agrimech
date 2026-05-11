@@ -8,11 +8,21 @@ export interface ReportState {
   syncedApps: Set<number>;
 }
 
+export interface ReportsListState {
+  searchQuery: string;
+  currentPage: number;
+  pageSize: number;
+  selectedStatus: string;
+  selectedDistrictId: number | null;
+  selectedFirmId: number | null;
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class ReportStateService {
   private states = new Map<number, ReportState>();
+  private reportsListState: ReportsListState | null = null;
 
   getOrCreateState(reportId: number): ReportState {
     if (!this.states.has(reportId)) {
@@ -33,5 +43,17 @@ export class ReportStateService {
 
   clearState(reportId: number) {
     this.states.delete(reportId);
+  }
+
+  getReportsListState(): ReportsListState | null {
+    return this.reportsListState;
+  }
+
+  saveReportsListState(state: ReportsListState) {
+    this.reportsListState = state;
+  }
+
+  clearReportsListState() {
+    this.reportsListState = null;
   }
 }

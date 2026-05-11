@@ -20,6 +20,10 @@ export class FirmService {
         return this.http.get<PaginatedResponse<Firm>>(url);
     }
 
+    getFirmsList(): Observable<Firm[]> {
+        return this.http.get<Firm[]>(`${this.apiUrl}/list`);
+    }
+
     getFirmById(id: number): Observable<Firm> {
         return this.http.get<Firm>(`${this.apiUrl}/${id}`);
     }

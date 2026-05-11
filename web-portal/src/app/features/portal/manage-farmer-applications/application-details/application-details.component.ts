@@ -10,17 +10,18 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBarModule, MatSnackBar } from '@angular/material/snack-bar';
+import { AuthService } from '../../../../core/services/auth.service';
 import { FarmerApplicationService, FarmerApplicationPayload } from '../../../../core/services/farmer-application.service';
 import { BookingService, BookingRequest } from '../../../../core/services/booking.service';
 import { FileUploadService } from '../../../../core/services/file-upload.service';
 import { FileUploadComponent } from '../../../../shared/components/file-upload/file-upload.component';
-import { finalize } from 'rxjs';
+import { finalize, forkJoin } from 'rxjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { HttpEventType } from '@angular/common/http';
 import * as QRCode from 'qrcode';
-import { MatDialogModule, MatDialog } from '@angular/material/dialog';
-import { MapJourneyDialogComponent } from '../../../imei-verification/map-journey/map-journey-dialog.component';
+import { MachineLiveReportService } from '../../../../core/services/machine-live-report.service';
+import html2canvas from 'html2canvas';
 
 // Finalizing application lifecycle view
 @Component({
@@ -36,7 +37,6 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
     MatProgressBarModule,
     MatProgressSpinnerModule,
     MatSnackBarModule,
-    MatDialogModule,
     FormsModule,
     FileUploadComponent
   ],
@@ -134,6 +134,13 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
         <div style="font-size: 11px; color: #94a3b8; font-weight: 600; margin-top: 4px;">Preparing high-fidelity PDF dossier</div>
       </div>
 
+      <!-- Allotment Letter Generation Overlay -->
+      <div class="loading-overlay" *ngIf="isProcessingAllotment()">
+        <mat-spinner diameter="60" color="primary"></mat-spinner>
+        <div class="l-text">Generating Official Allotment Letter...</div>
+        <div style="font-size: 11px; color: #94a3b8; font-weight: 600; margin-top: 4px;">Building bilingual PDF, uploading & recording audit trail</div>
+      </div>
+
       <!-- DIC DECISION WIZARD: Premium Sign-off Interface -->
       <div class="loading-overlay decision-wizard" *ngIf="isDicDecisionWizardActive()">
         <div class="selection-card">
@@ -170,15 +177,33 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
                 <span>Upload Official Scanned Dossier (Signed DIC Report)</span>
              </div>
              
-             <div class="upload-area" (click)="signedFileInput.click()" [class.has-file]="!!signedDicFile">
+             <div class="upload-area" (click)="signedFileInput.click()" [class.has-file]="!!signedDicFile" style="margin-bottom: 16px;">
                 <input type="file" #signedFileInput hidden (change)="onSignedFileSelected($event)" accept="application/pdf">
                 <mat-icon>{{ signedDicFile ? 'task' : 'cloud_upload' }}</mat-icon>
-                <div class="file-text">{{ signedDicFile ? signedDicFile.name : 'Click to Browse Signed PDF' }}</div>
+                <div class="file-text">{{ signedDicFile ? signedDicFile.name : 'Click to Browse Signed DIC PDF' }}</div>
              </div>
+
+             <div class="step-meta">
+                <mat-icon>upload_file</mat-icon>
+                <span>Upload Official Scanned Dossier (Signed ES Screening)</span>
+             </div>
+
+             <div class="upload-area" (click)="signedEsFileInput.click()" [class.has-file]="!!signedEsScreeningFile">
+                <input type="file" #signedEsFileInput hidden (change)="onSignedEsFileSelected($event)" accept="application/pdf">
+                <mat-icon>{{ signedEsScreeningFile ? 'task' : 'cloud_upload' }}</mat-icon>
+                <div class="file-text">{{ signedEsScreeningFile ? signedEsScreeningFile.name : 'Click to Browse Signed ES PDF' }}</div>
+             </div>
+             
+             <!-- NEW: Approval Remarks Section -->
+             <div class="step-meta" style="margin-top: 16px;">
+                <mat-icon>mode_comment</mat-icon>
+                <span>Final Approval Remarks (Optional)</span>
+             </div>
+             <textarea class="remarks-area" style="min-height: 80px;" placeholder="Add final observations or committee notes..." [(ngModel)]="dicApprovalRemarks"></textarea>
 
              <div class="wizard-actions">
                 <button mat-button (click)="dicDecisionProcess.set(null)">BACK</button>
-                <button mat-flat-button color="primary" [disabled]="!signedDicFile" (click)="submitDicApproval()">COMPLETE APPROVAL</button>
+                <button mat-flat-button color="primary" [disabled]="!signedDicFile || !signedEsScreeningFile" (click)="submitDicApproval()">COMPLETE APPROVAL</button>
              </div>
           </div>
 
@@ -224,8 +249,8 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
               <div class="p-tag green" *ngIf="['QIC_APPROVED', 'DIC_PENDING', 'DIC_APPROVED', 'COMPLETED'].includes(app.status) || app.localDecision === 'PASSED'">
                 <mat-icon>verified</mat-icon> QIC PASSED
               </div>
-              <button mat-button class="p-tag blue" *ngIf="app.trackerImei && app.trackerImei !== 'PENDING'" (click)="onViewLiveLocation(app.trackerImei)">
-                <mat-icon>location_on</mat-icon> View Live Location
+              <button mat-button class="p-tag blue" *ngIf="app.trackerImei && app.trackerImei !== 'PENDING'" (click)="onViewMap(app)" [disabled]="isOpeningMap()">
+                <mat-icon>map</mat-icon> View Map
               </button>
            </div>
         </div>
@@ -343,6 +368,23 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
                  </div>
               </div>
 
+              <div class="p-item-group" *ngIf="app.allotmentCategory && (app.status === 'BALLOTED' || app.status === 'ALLOTED')">
+                 <div class="p-icon-box small"><mat-icon>how_to_vote</mat-icon></div>
+                 <div class="p-text-box">
+                    <label>REMARKS</label>
+                    <div class="p-val-group ballot-remarks-display">
+                      <span class="ballot-remark-chip winner" *ngIf="isBallotWinnerCategory(app.allotmentCategory)">
+                        <mat-icon>emoji_events</mat-icon>
+                        <span>Winner — {{ app.allotmentCategory }}</span>
+                      </span>
+                      <span class="ballot-remark-chip waiting" *ngIf="!isBallotWinnerCategory(app.allotmentCategory)">
+                        <mat-icon>hourglass_empty</mat-icon>
+                        <span>Waiting — {{ app.allotmentCategory }}</span>
+                      </span>
+                    </div>
+                 </div>
+              </div>
+
               <div class="p-item-group" *ngIf="app.address">
                  <div class="p-icon-box small"><mat-icon>home</mat-icon></div>
                  <div class="p-text-box">
@@ -376,6 +418,41 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
                  <div class="p-text-box">
                     <label>TRACKER IMEI</label>
                     <h3>{{app.trackerImei}}</h3>
+                 </div>
+              </div>
+
+              <!-- Manufacturing Firm Section -->
+              <div class="p-item-group" *ngIf="app.bookedByFirmName">
+                 <div class="p-icon-box small purple"><mat-icon>factory</mat-icon></div>
+                 <div class="p-text-box">
+                    <label>MANUFACTURING FIRM</label>
+                    <h3>{{app.bookedByFirmName}}</h3>
+                 </div>
+              </div>
+
+              <!-- Farmer Identification Section -->
+              <div class="p-item-group">
+                 <div class="p-icon-box small" [class.success]="app.farmerCnicFront"><mat-icon>assignment_ind</mat-icon></div>
+                 <div class="p-text-box">
+                   <label>FARMER CNIC DOCUMENTS</label>
+                  <div class="p-val-group" *ngIf="!hasFarmerCnicDocs(app)">
+                       <button mat-flat-button class="dic-start-btn" style="margin-top: 4px; min-width: 170px;" (click)="openCnicWizard()">
+                           <mat-icon>add_a_photo</mat-icon> Attach Farmer CNIC
+                       </button>
+                   </div>
+                  <div class="p-val-group" *ngIf="hasFarmerCnicDocs(app)">
+                       <div class="cnic-download-actions">
+                           <button mat-stroked-button class="mini-tag blue" (click)="downloadCnic(app.farmerCnicFront)">
+                               <mat-icon>download</mat-icon> CNIC FRONT
+                           </button>
+                           <button mat-stroked-button class="mini-tag blue" (click)="downloadCnic(app.farmerCnicBack)">
+                               <mat-icon>download</mat-icon> CNIC BACK
+                           </button>
+                           <button mat-icon-button class="inline-edit-btn" (click)="openCnicWizard()" style="opacity: 1;" matTooltip="Update Documents">
+                               <mat-icon>refresh</mat-icon>
+                           </button>
+                       </div>
+                   </div>
                  </div>
               </div>
            </div>
@@ -511,10 +588,51 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
                       <div class="id-val">{{app.uniqueImplementId || 'N/A (Pending)'}}</div>
                    </div>
                    <p class="qr-instr">The unique machine / implement ID Plate and tracker with QR code have been installed on each machine / implement. This QR code contains authenticated application data for field verification via Punjab Clean Air mobile apps.</p>
-                   <button mat-stroked-button class="print-qr-btn">
+                   <button mat-stroked-button class="print-qr-btn" (click)="printQRLabel()">
                      <mat-icon>print</mat-icon> Print QR Label
                    </button>
                 </div>
+              </div>
+            </div>
+          </mat-card>
+          <!-- Subsidy Release Action Card -->
+          <mat-card class="info-card action-card subsidy-action" *ngIf="app.status === 'SUBSIDY_REQUESTED' && hasReleaseSubsidyFeature()">
+            <div class="card-header">
+              <mat-icon>payments</mat-icon>
+              <h3>Release Farmer Share</h3>
+            </div>
+            <div class="info-body">
+              <p class="instr">Finalize the financial lifecycle by marking the subsidy as released and paid to the firm/farmer.</p>
+              
+              <div class="action-form">
+                <div class="form-group">
+                  <label>Payment Proof / Attachment (Optional)</label>
+                  <div class="proof-upload-zone" [class.has-file]="subsidyProofFile()" (click)="!subsidyProofFile() && proofInput.click()">
+                    <input type="file" #proofInput (change)="onSubsidyProofSelected($event)" style="display: none;" accept=".pdf,image/*">
+                    
+                    <div class="upload-placeholder" *ngIf="!subsidyProofFile()">
+                      <mat-icon>cloud_upload</mat-icon>
+                      <span>Click to upload payment receipt/proof</span>
+                    </div>
+
+                    <div class="file-preview" *ngIf="subsidyProofFile()">
+                      <mat-icon>description</mat-icon>
+                      <div class="f-info">
+                        <span class="fname">{{subsidyProofFile()?.name}}</span>
+                        <span class="fsize">{{(subsidyProofFile()?.size || 0) / 1024 | number:'1.0-2'}} KB</span>
+                      </div>
+                      <button mat-icon-button (click)="removeSubsidyProof($event)" color="warn" matTooltip="Remove File">
+                        <mat-icon>cancel</mat-icon>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                
+                <button mat-flat-button class="execute-btn" style="background: #0f172a !important;" (click)="onExecuteSubsidyRelease()" [disabled]="isProcessingSubsidy()">
+                  <mat-icon *ngIf="!isProcessingSubsidy()">check_circle</mat-icon>
+                  <span *ngIf="!isProcessingSubsidy()">Mark as Farmer Share Released</span>
+                  <span *ngIf="isProcessingSubsidy()">Processing & Uploading...</span>
+                </button>
               </div>
             </div>
           </mat-card>
@@ -575,37 +693,50 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
             </div>
           </mat-card>
 
+          <!-- Ballot Action Card -->
+          <mat-card class="info-card action-card" *ngIf="app.status === 'ELIGIBLE' || app.status === 'ACCEPTED'">
+            <div class="card-header">
+              <mat-icon>auto_awesome_motion</mat-icon>
+              <h3>Ballot Farmer (Selected)</h3>
+            </div>
+            <div class="info-body">
+              <p class="instr">Mark this farmer as selected through the balloting process.</p>
+              <button mat-flat-button class="execute-btn" (click)="openBallotWizard()">
+                <mat-icon>how_to_vote</mat-icon>
+                <span>Ballot This Farmer</span>
+              </button>
+            </div>
+          </mat-card>
 
           <!-- Allotment Action Card -->
           <mat-card class="info-card action-card" *ngIf="app.status === 'BALLOTED'">
             <div class="card-header">
-              <mat-icon>verified_user</mat-icon>
-              <h3>Execute Allotment</h3>
+              <mat-icon>assignment_turned_in</mat-icon>
+              <h3>Process Allotment</h3>
             </div>
             <div class="info-body">
-              <p class="instr">Finalize selection by assigning the applicant to a quota category.</p>
-              
+              <p class="instr">Fill in allotment details to generate the official allotment letter and proceed with booking.</p>
+              <p class="instr instr-warn" *ngIf="app.allotmentCategory && !isBallotWinnerCategory(app.allotmentCategory)">
+                Allotment letters can only be generated for farmers on the Winner list. This application is on the waiting list ({{ app.allotmentCategory }}).
+              </p>
               <div class="action-form">
-                <div class="form-group">
-                  <label>Quota Category</label>
-                  <select [(ngModel)]="allotmentModel.category" class="premium-select">
-                    <option value="WINNER">Winner (Selected)</option>
-                    <option value="WAITING">Waiting List</option>
-                  </select>
+                <div class="form-group" *ngIf="app.allotmentCategory">
+                  <label>Remarks (ballot outcome)</label>
+                  <div class="readonly-field">{{ app.allotmentCategory }}</div>
                 </div>
                 <div class="form-group">
-                  <label>Queue Position (1-100)</label>
-                  <input type="number" [(ngModel)]="allotmentModel.quotaNumber" class="premium-input" min="1" max="100">
+                  <label>Allotment Number</label>
+                  <input type="text" [(ngModel)]="allotmentModel.number" class="premium-input" placeholder="Enter Allotment No.">
                 </div>
                 <div class="form-group">
                   <label>Allotment Date</label>
                   <input type="date" [(ngModel)]="allotmentModel.date" class="premium-input">
                 </div>
                 
-                <button mat-flat-button class="execute-btn" (click)="onExecuteAllotment()" [disabled]="isProcessingAllotment()">
+                <button mat-flat-button class="execute-btn" (click)="onExecuteAllotment()" [disabled]="isProcessingAllotment() || !allotmentModel.number || !allotmentModel.date || !isBallotWinnerCategory(app.allotmentCategory)">
                   <mat-icon *ngIf="!isProcessingAllotment()">document_scanner</mat-icon>
                   <span *ngIf="!isProcessingAllotment()">Confirm & Allot</span>
-                  <span *ngIf="isProcessingAllotment()">Processing...</span>
+                  <span *ngIf="isProcessingAllotment()">Generating Allotment Letter...</span>
                 </button>
               </div>
             </div>
@@ -629,16 +760,20 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
                     <span class="c-val highlight">{{app.allotmentNumber}}</span>
                   </div>
                   <div class="c-item">
-                    <span class="c-label">CATEGORY:</span>
-                    <span class="c-val">{{app.allotmentCategory}} - Position #{{app.allotmentQuotaNumber}}</span>
+                    <span class="c-label">REMARKS:</span>
+                    <span class="c-val">{{ isBallotWinnerCategory(app.allotmentCategory) ? 'Winner' : 'Waiting' }} — {{app.allotmentCategory}} · Position #{{app.allotmentQuotaNumber}}</span>
                   </div>
                   <div class="c-item">
                     <span class="c-label">ISSUED ON:</span>
                     <span class="c-val">{{app.allotmentDate | date:'mediumDate'}}</span>
                   </div>
                 </div>
-                <button mat-stroked-button class="print-cert-btn">
-                  <mat-icon>download</mat-icon> <span>Download Allotment Letter (PDF)</span>
+                <button mat-stroked-button class="print-cert-btn" type="button"
+                        (click)="downloadAllotmentLetter()"
+                        [disabled]="isDownloadingAllotmentLetter()">
+                  <mat-spinner *ngIf="isDownloadingAllotmentLetter()" diameter="22" class="print-cert-spinner"></mat-spinner>
+                  <mat-icon *ngIf="!isDownloadingAllotmentLetter()">download</mat-icon>
+                  <span>{{ isDownloadingAllotmentLetter() ? 'Preparing PDF…' : 'Download Allotment Letter (PDF)' }}</span>
                 </button>
               </div>
             </div>
@@ -704,17 +839,17 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
                 </div>
 
                 <!-- Download Attachment Button (Redesigned for context) -->
-                <div class="attachment-action" *ngIf="item.attachmentPath">
-                  <button mat-flat-button class="download-sign-btn" (click)="downloadAttachment(item.attachmentPath)">
+                <div class="attachment-action" *ngIf="item.attachmentPath || (item.action === 'SUBSIDY_RELEASED' && app.subsidyReleaseProofPath)">
+                  <button mat-flat-button class="download-sign-btn" (click)="downloadAttachment(item.attachmentPath || app.subsidyReleaseProofPath!)">
                     <mat-icon>file_download</mat-icon> 
-                    <span>{{ item.action === 'DIC_START' ? 'Click Here to Download DIC Performa' : (item.action === 'QIC_BILL_GENERATED' ? 'Click Here to Download' : 'Download Signed Report') }}</span>
+                    <span>{{ item.action === 'DIC_START' ? 'Click Here to Download DIC Performa' : (item.action === 'ES_SCREENING_GEN' ? 'Download ES Screening Document' : (item.action === 'ES_SCREENING_SIGNED' ? 'Download Signed ES Screening' : (item.action === 'QIC_BILL_GENERATED' ? 'Click Here to Download' : (item.action === 'SUBSIDY_RELEASED' ? 'Download Subsidy Release Proof' : 'Download Signed Report')))) }}</span>
                   </button>
                 </div>
                 
                 <div class="default-desc" *ngIf="!item.remarks">
                   {{ item.status === 'BALLOTED' ? 'Successfully selected in computerized balloting.' : 
                      item.status === 'ALLOTED' ? 'Official Punjab Government Allotment Letter Issued.' :
-                     'Awaiting administrative review.' }}
+                     'Administrative Approved.' }}
                 </div>
               </div>
             </div>
@@ -742,6 +877,81 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
           </div>
         </div>
       </mat-card>
+
+      <!-- Ballot Farmer Wizard -->
+      <div class="loading-overlay decision-wizard" *ngIf="isBallotWizardActive()">
+        <div class="selection-card">
+          <div class="wizard-header">
+            <mat-icon class="dic-icon">how_to_vote</mat-icon>
+            <h3>Ballot Farmer Selection</h3>
+            <p>Select category and date to ballot this farmer application</p>
+          </div>
+
+          <div class="action-form" style="padding: 20px 0;">
+            <div class="form-group">
+              <label>Balloting Date</label>
+              <input type="date" [(ngModel)]="ballotModel.date" class="premium-input">
+            </div>
+            <div class="form-group">
+              <label>Balloting Category</label>
+              <select [(ngModel)]="ballotModel.category" class="premium-input">
+                <option *ngFor="let opt of ballotCategoryOptions" [value]="opt">{{opt}}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="wizard-actions">
+            <button mat-button class="cancel-wizard" (click)="closeBallotWizard()" [disabled]="isProcessingBallot()">Cancel</button>
+            <button mat-flat-button color="primary" class="premium-action-btn"
+                    [disabled]="isProcessingBallot()"
+                    (click)="submitBallot()">
+              <mat-icon *ngIf="!isProcessingBallot()">how_to_vote</mat-icon>
+              <span *ngIf="!isProcessingBallot()">CONFIRM BALLOT</span>
+              <span *ngIf="isProcessingBallot()">PROCESSING...</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Farmer CNIC Attachment Wizard -->
+      <div class="loading-overlay decision-wizard" *ngIf="isCnicWizardActive()">
+        <div class="selection-card">
+          <div class="wizard-header">
+            <mat-icon class="dic-icon">assignment_ind</mat-icon>
+            <h3>Attach Farmer Identification</h3>
+            <p>Upload Front and Back sides of the farmer's CNIC (Image or PDF)</p>
+          </div>
+
+          <div class="upload-step">
+            <div class="step-meta"><mat-icon>badge</mat-icon> <span>CNIC FRONT SIDE</span></div>
+            <app-file-upload 
+                (fileSelected)="onCnicFrontSelected($event)" 
+                [progress]="cnicFrontProgress()" 
+                [isUploading]="isUploadingCnic()"
+                style="margin-bottom: 24px; display: block;">
+            </app-file-upload>
+
+            <div class="step-meta" style="margin-top: 16px;"><mat-icon>badge</mat-icon> <span>CNIC BACK SIDE</span></div>
+            <app-file-upload 
+                (fileSelected)="onCnicBackSelected($event)" 
+                [progress]="cnicBackProgress()" 
+                [isUploading]="isUploadingCnic()">
+            </app-file-upload>
+          </div>
+
+          <div class="wizard-actions">
+            <button mat-button class="cancel-wizard" (click)="closeCnicWizard()" [disabled]="isUploadingCnic()">Cancel</button>
+            <button mat-flat-button color="primary" 
+                    [disabled]="!cnicFrontFile || !cnicBackFile || isUploadingCnic()"
+                    (click)="submitCnicDocs()"
+                    class="premium-action-btn">
+              <mat-icon *ngIf="!isUploadingCnic()">cloud_upload</mat-icon>
+              <span *ngIf="!isUploadingCnic()">UPLOAD & ATTACH</span>
+              <span *ngIf="isUploadingCnic()">UPLOADING...</span>
+            </button>
+          </div>
+        </div>
+      </div>
       </ng-container>
     </div>
   `,
@@ -867,6 +1077,15 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
     
     .action-card { background: #f0fdf4 !important; border: 1px solid #bbf7d0 !important; }
     .instr { font-size: 13px; color: #166534; font-weight: 500; margin-bottom: 20px; }
+    .instr-warn { color: #92400e; font-weight: 600; background: #fffbeb; padding: 12px 14px; border-radius: 12px; border: 1px solid #fcd34d; margin-bottom: 16px; line-height: 1.45; }
+    .readonly-field { min-height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid #bbf7d0; background: #f8fafc; font-weight: 700; color: #1e293b; display: flex; align-items: center; }
+    .ballot-remarks-display { margin-top: 4px; }
+    .ballot-remark-chip {
+      display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 12px; font-weight: 800; font-size: 14px;
+      mat-icon { font-size: 20px; width: 20px; height: 20px; }
+      &.winner { background: #ecfdf5; color: #047857; border: 1px solid #bbf7d0; mat-icon { color: #ca8a04; } }
+      &.waiting { background: #fffbeb; color: #b45309; border: 1px solid #fcd34d; mat-icon { color: #d97706; } }
+    }
     .action-form { display: flex; flex-direction: column; gap: 16px; }
     .form-group { display: flex; flex-direction: column; gap: 6px; label { font-size: 11px; font-weight: 800; color: #166534; text-transform: uppercase; } }
     .premium-select, .premium-input { height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid #bbf7d0; background: white; font-weight: 700; color: #1e293b; outline: none; &:focus { border-color: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1); } }
@@ -877,7 +1096,9 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
     .cert-header { text-align: center; margin-bottom: 32px; position: relative; z-index: 1; .govt-label { font-size: 11px; font-weight: 800; color: #10b981; letter-spacing: 2px; } .cert-title { font-size: 24px; font-weight: 900; color: #0f172a; margin-top: 4px; } }
     .cert-data { display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px; position: relative; z-index: 1; }
     .c-item { display: flex; justify-content: space-between; align-items: center; .c-label { font-size: 12px; font-weight: 700; color: #64748b; } .c-val { font-size: 15px; font-weight: 800; color: #1e293b; } }
-    .print-cert-btn { width: 100%; height: 48px; border-radius: 14px; border: 2px solid #10b981 !important; color: #10b981 !important; font-weight: 800; mat-icon { margin-right: 8px; } }
+    .print-cert-btn { width: 100%; height: 48px; border-radius: 14px; border: 2px solid #10b981 !important; color: #10b981 !important; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; mat-icon { margin-right: 8px; } }
+    .print-cert-spinner { margin-right: 8px; }
+    .print-cert-btn .print-cert-spinner ::ng-deep circle { stroke: #10b981 !important; }
 
     /* Audit Trail Redesign */
     .badge-row { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
@@ -906,7 +1127,9 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
       &.approved, &.completed { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
       &.deferred, &.rejected { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
       &.qic-review, &.dic-pending, &.qic-pending, &.qic-in-progress { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+      &.subsidy-requested { background: #f5f3ff; color: #7c3aed; border-color: #ddd6fe; }
       &.booked, &.allotted, &.balloted { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+      &.balloted-waiting { background: #fffbeb; color: #b45309; border-color: #fcd34d; }
       &.default { background: #f8fafc; color: #475569; border-color: #e2e8f0; }
       
       &:hover { transform: scale(1.02); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
@@ -1291,20 +1514,56 @@ import { MapJourneyDialogComponent } from '../../../imei-verification/map-journe
        mat-icon { color: #64748b; font-size: 32px; width: 32px; height: 32px; } .file-text { font-size: 11px; font-weight: 700; color: #475569; margin-top: 8px; }
        &:hover { border-color: #3b82f6; background: #eff6ff; } &.has-file { border-color: #10b981; background: #f0fdf4; mat-icon { color: #10b981; } }
     }
-    .remarks-area { width: 100%; height: 100px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; font-size: 13px; font-weight: 500; font-family: inherit; resize: none; &:focus { border-color: #ef4444; outline: none; box-shadow: 0 0 0 3px rgba(239,68,68,0.1); } }
+    .remarks-area { width: 100%; height: 100px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; font-size: 13px; font-weight: 500; font-family: inherit; resize: none; &:focus { border-color: #3b82f6; outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); } }
     .wizard-actions { display: flex; justify-content: space-between; margin-top: 24px; button { font-weight: 800; text-transform: uppercase; letter-spacing: 1px; font-size: 11px; } }
+
+    .cnic-download-actions { display: flex; gap: 8px; margin-top: 4px; align-items: center; }
+    .mini-tag {
+        font-size: 9px; font-weight: 800; padding: 0 10px; height: 28px; line-height: 28px; border-radius: 6px;
+        mat-icon { font-size: 14px; width: 14px; height: 14px; margin-right: 4px; }
+        &.blue { background: #eff6ff; color: #1e40af; border: 1px solid #dbeafe; }
+        &.green { background: #f0fdf4; color: #166534; border: 1px solid #dcfce7; }
+        &:hover { background: #dbeafe; }
+    }
+    .p-icon-box.success { background: #f0fdf4; color: #10b981; }
+
+    .proof-upload-zone {
+      margin-top: 8px; border: 2px dashed #e2e8f0; border-radius: 16px; padding: 20px;
+      text-align: center; cursor: pointer; transition: all 0.3s; background: #f8fafc;
+      &:hover { border-color: #10b981; background: #f0fdf4; }
+      &.has-file { border-style: solid; border-color: #10b981; background: #f0fdf4; cursor: default; }
+      
+      .upload-placeholder {
+        display: flex; flex-direction: column; align-items: center; gap: 8px; color: #64748b;
+        mat-icon { font-size: 32px; width: 32px; height: 32px; }
+        span { font-size: 13px; font-weight: 600; }
+      }
+      
+      .file-preview {
+        display: flex; align-items: center; gap: 12px; text-align: left;
+        mat-icon { color: #10b981; font-size: 28px; width: 28px; height: 28px; }
+        .f-info { flex: 1; display: flex; flex-direction: column; 
+          .fname { font-weight: 700; color: #1e293b; font-size: 14px; }
+          .fsize { font-size: 11px; color: #64748b; }
+        }
+      }
+    }
   `]
 })
 export class ApplicationDetailsComponent implements OnInit {
   private route = inject(ActivatedRoute);
+  private authService = inject(AuthService);
   private applicationService = inject(FarmerApplicationService);
   private router = inject(Router);
   private bookingService = inject(BookingService);
   private fileUploadService = inject(FileUploadService);
   private snackBar = inject(MatSnackBar);
+  private machineLiveReportService = inject(MachineLiveReportService);
 
   application = signal<FarmerApplicationPayload | null>(null);
   isLoading = signal(true);
+  /** While resolving last GPS from machine live report for View Map. */
+  isOpeningMap = signal(false);
 
   // File Upload State
   selectedFile = signal<File | null>(null);
@@ -1313,10 +1572,113 @@ export class ApplicationDetailsComponent implements OnInit {
   hasStartInspectionFeature = signal(false);
   hasStartDICFeature = signal(false);
   hasEditFeature = signal(false);
+  hasReleaseSubsidyFeature = signal(false);
   editingField = signal<string | null>(null);
   isUpdatingField = signal(false);
   editModel: any = {};
   qrCodeDataUrl = signal<string>('');
+
+  // Subsidy Release State
+  isProcessingSubsidy = signal(false);
+  subsidyRemarks = '';
+  subsidyProofFile = signal<File | null>(null);
+
+  // Farmer CNIC Documents State
+  isCnicWizardActive = signal(false);
+  isUploadingCnic = signal(false);
+  cnicFrontFile: File | null = null;
+  cnicBackFile: File | null = null;
+  cnicFrontProgress = signal(0);
+  cnicBackProgress = signal(0);
+
+  openCnicWizard() {
+    this.isCnicWizardActive.set(true);
+  }
+
+  closeCnicWizard() {
+    this.isCnicWizardActive.set(false);
+    this.cnicFrontFile = null;
+    this.cnicBackFile = null;
+    this.cnicFrontProgress.set(0);
+    this.cnicBackProgress.set(0);
+  }
+
+  onCnicFrontSelected(file: File | null) {
+    this.cnicFrontFile = file;
+  }
+
+  onCnicBackSelected(file: File | null) {
+    this.cnicBackFile = file;
+  }
+
+  hasFarmerCnicDocs(app: FarmerApplicationPayload): boolean {
+    return !!(app?.farmerCnicFront && app?.farmerCnicBack);
+  }
+
+  submitCnicDocs() {
+    const app = this.application();
+    if (!app || !app.id || !this.cnicFrontFile || !this.cnicBackFile) return;
+
+    this.isUploadingCnic.set(true);
+    this.cnicFrontProgress.set(0);
+    this.cnicBackProgress.set(0);
+
+    // Upload Front
+    this.fileUploadService.upload(this.cnicFrontFile).subscribe({
+      next: (event: any) => {
+        if (event.type === HttpEventType.UploadProgress) {
+          this.cnicFrontProgress.set(Math.round(100 * event.loaded / event.total));
+        } else if (event.type === HttpEventType.Response) {
+          const frontFileName = event.body.fileName;
+          // Now Upload Back
+          this.fileUploadService.upload(this.cnicBackFile!).subscribe({
+            next: (event2: any) => {
+              if (event2.type === HttpEventType.UploadProgress) {
+                this.cnicBackProgress.set(Math.round(100 * event2.loaded / event2.total));
+              } else if (event2.type === HttpEventType.Response) {
+                const backFileName = event2.body.fileName;
+                // Final Step: Post the IDs to application service
+                this.applicationService.updateFarmerCnic(app.id!, frontFileName, backFileName).subscribe({
+                  next: (updated) => {
+                    this.application.set({
+                      ...updated,
+                      // Ensure UI immediately reflects successful upload even if API omits these fields.
+                      farmerCnicFront: updated?.farmerCnicFront || frontFileName,
+                      farmerCnicBack: updated?.farmerCnicBack || backFileName
+                    });
+                    this.isUploadingCnic.set(false);
+                    this.closeCnicWizard();
+                    this.snackBar.open('Excellent! Farmer CNIC documentation has been archived successfully.', 'Dismiss', {
+                      duration: 4000,
+                      panelClass: ['premium-success-snackbar']
+                    });
+                  },
+                  error: (err) => {
+                    this.isUploadingCnic.set(false);
+                    this.snackBar.open('Dossier update failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
+                  }
+                });
+              }
+            },
+            error: () => {
+              this.isUploadingCnic.set(false);
+              this.snackBar.open('Back CNIC upload failed.', 'Error', { duration: 5000 });
+            }
+          });
+        }
+      },
+      error: () => {
+        this.isUploadingCnic.set(false);
+        this.snackBar.open('Front CNIC upload failed.', 'Error', { duration: 5000 });
+      }
+    });
+  }
+
+  downloadCnic(path: string | undefined) {
+    if (!path) return;
+    const url = `${environment.apiUrl}/api/files/download/${path}`;
+    window.open(url, '_blank');
+  }
 
   phases = [
     { name: 'Registry', key: 'REGISTRATION', icon: 'how_to_reg', statuses: ['ACCEPTED', 'ELIGIBLE', 'PENDING'] },
@@ -1325,17 +1687,55 @@ export class ApplicationDetailsComponent implements OnInit {
     { name: 'Booking', key: 'BOOKING', icon: 'bookmark_added', statuses: ['BOOKED'] },
     { name: 'Inspection QIC', key: 'INSPECTION', icon: 'fact_check', statuses: ['QIC_PENDING', 'QIC_REQUESTED', 'QIC_IN_PROGRESS', 'QIC_APPROVED', 'QIC_DEFFERED'] },
     { name: 'Inspection DIC', key: 'DIC_INSPECTION', icon: 'how_to_reg', statuses: ['DIC_PENDING', 'DIC_IN_PROGRESS', 'DIC_APPROVED', 'DIC_DEFERED', 'DIC_DEFFERED'] },
-    { name: 'Subsidy', key: 'SUBSIDY', icon: 'payments', statuses: ['REQUEST_INVOICE', 'SUBSIDY_PAID'] },
+    { name: 'Farmer Share', key: 'SUBSIDY', icon: 'payments', statuses: ['REQUEST_INVOICE', 'SUBSIDY_REQUESTED', 'SUBSIDY_PAID'] },
     { name: 'Completed', key: 'COMPLETED', icon: 'offline_pin', statuses: ['COMPLETED'] }
   ];
 
+  // Ballot Form Model
+  isBallotWizardActive = signal(false);
+  isProcessingBallot = signal(false);
+  ballotModel = {
+    date: new Date().toISOString().split('T')[0],
+    category: 'Winner-1'
+  };
+  ballotCategoryOptions: string[] = [
+    ...Array.from({ length: 20 }, (_, i) => `Winner-${i + 1}`),
+    ...Array.from({ length: 20 }, (_, i) => `Waiting-${i + 1}`)
+  ];
+
+  openBallotWizard() { this.isBallotWizardActive.set(true); }
+  closeBallotWizard() { this.isBallotWizardActive.set(false); }
+
+  submitBallot() {
+    const app = this.application();
+    if (!app || !app.id) return;
+
+    this.isProcessingBallot.set(true);
+    this.applicationService.ballot(app.id, this.ballotModel.category, this.ballotModel.date)
+      .pipe(finalize(() => this.isProcessingBallot.set(false)))
+      .subscribe({
+        next: (updated) => {
+          this.application.set(updated);
+          this.closeBallotWizard();
+          this.snackBar.open('Farmer balloted successfully as ' + this.ballotModel.category, 'Close', {
+            duration: 4000, horizontalPosition: 'right', verticalPosition: 'top'
+          });
+        },
+        error: (err) => {
+          this.snackBar.open('Balloting failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
+        }
+      });
+  }
+
   // Allotment Form Model
   allotmentModel = {
-    category: 'WINNER',
+    number: '',
+    category: 'Winner-1',
     quotaNumber: 1,
     date: new Date().toISOString().split('T')[0]
   };
   isProcessingAllotment = signal(false);
+  isDownloadingAllotmentLetter = signal(false);
 
   // Booking Form Model
   bookingModel = {
@@ -1346,12 +1746,35 @@ export class ApplicationDetailsComponent implements OnInit {
   };
   isProcessingBooking = signal(false);
 
+  /** Same role check as the farmer applications list (district officer portal). */
+  private isDistrictOfficerUser(): boolean {
+    const role = this.authService.currentUser()?.role;
+    return role === 'DISTRICT_OFFICER' || role === 'ROLE_DISTRICT_OFFICER';
+  }
+
+  private showAllotmentLetterFeatureDisabled(): void {
+    this.snackBar.open('Currently this feature is disabled in the system.', 'Close', {
+      duration: 6000,
+      horizontalPosition: 'right',
+      verticalPosition: 'top'
+    });
+  }
+
+  /** Set to true to re-enable PDF generation, upload, and download on this page. */
+  private readonly allotmentLetterFeatureEnabled = false;
+
+  /** Ballot / allotment category from API (e.g. Winner-3, Waiting-2). Only Winner-* may receive an allotment letter. */
+  isBallotWinnerCategory(category: string | undefined | null): boolean {
+    if (category == null || typeof category !== 'string') return false;
+    return category.trim().toLowerCase().startsWith('winner');
+  }
+
   appStatusDisplay(): { text: string; class: string } {
     const app = this.application();
     if (!app) return { text: 'Loading...', class: 'default' };
     const s = app.status;
-    
-    switch(s) {
+
+    switch (s) {
       case 'BOOKED': return { text: 'Booking Secured', class: 'booked' };
       case 'QIC_PENDING': return { text: 'QIC Draft Mode', class: 'qic-pending' };
       case 'QIC_REQUESTED': return { text: 'Pending Convener Review', class: 'qic-review' };
@@ -1360,11 +1783,22 @@ export class ApplicationDetailsComponent implements OnInit {
       case 'QIC_DEFFERED': return { text: 'QIC Deferred (Follow Up)', class: 'deferred' };
       case 'DIC_PENDING': return { text: 'Awaiting DIC Verification', class: 'dic-pending' };
       case 'DIC_IN_PROGRESS': return { text: 'In Progress: DIC Field Work', class: 'dic-pending' };
-      case 'DIC_DEFERED': 
+      case 'DIC_DEFERED':
       case 'DIC_DEFFERED': return { text: 'DIC Deferred (Follow Up)', class: 'deferred' };
       case 'DIC_APPROVED': return { text: 'DIC Cleared', class: 'approved' };
+      case 'SUBSIDY_REQUESTED': return { text: 'Farmer Share Batch Requested', class: 'subsidy-requested' };
+      case 'SUBSIDY_PAID': return { text: 'Farmer Share Released', class: 'approved' };
       case 'COMPLETED': return { text: 'Lifecycle Completed', class: 'completed' };
-      case 'BALLOTED': return { text: 'Ballot Selection Winner', class: 'balloted' };
+      case 'BALLOTED': {
+        const cat = (app.allotmentCategory || '').trim().toLowerCase();
+        if (cat.startsWith('waiting')) {
+          return { text: 'Balloted — Waiting list', class: 'balloted-waiting' };
+        }
+        if (cat.startsWith('winner')) {
+          return { text: 'Balloted — Winner', class: 'balloted' };
+        }
+        return { text: 'Balloted', class: 'balloted' };
+      }
       case 'ALLOTED': return { text: 'Official Quota Allotted', class: 'allotted' };
       case 'REJECTED': return { text: 'Application Denied', class: 'rejected' };
       default: return { text: s?.replace(/_/g, ' ') || 'In Processing', class: 'default' };
@@ -1404,10 +1838,13 @@ export class ApplicationDetailsComponent implements OnInit {
           allFeatures.some((f: any) => f.name === 'Quality Inspection Initiation Request. (QIC Start)' && f.active)
         );
         this.hasStartDICFeature.set(
-            allFeatures.some((f: any) => f.name === 'Delivery Inspection Initiation Request (DIC Start)' && f.active)
+          allFeatures.some((f: any) => f.name === 'Delivery Inspection Initiation Request (DIC Start)' && f.active)
         );
         this.hasEditFeature.set(
           allFeatures.some((f: any) => (f.name === 'Edit Farmer Application' || f.name === 'Farmer Application Updation') && f.active)
+        );
+        this.hasReleaseSubsidyFeature.set(
+          allFeatures.some((f: any) => f.name === 'Release Subsidy' && f.active)
         );
       } catch (e) {
         console.error('Error parsing features', e);
@@ -1423,6 +1860,13 @@ export class ApplicationDetailsComponent implements OnInit {
         this.application.set(data);
         if (data.farmerShare) {
           this.bookingModel.cdrAmount = data.farmerShare;
+        }
+        if (data.status === 'BALLOTED' && data.allotmentCategory) {
+          this.allotmentModel.category = data.allotmentCategory;
+          const m = data.allotmentCategory.match(/^(?:Winner|Waiting)-(\d+)$/i);
+          if (m) {
+            this.allotmentModel.quotaNumber = parseInt(m[1], 10);
+          }
         }
         this.generateQRCode(data);
       },
@@ -1444,6 +1888,131 @@ export class ApplicationDetailsComponent implements OnInit {
     } catch (err) {
       console.error('QR Generation failed', err);
     }
+  }
+
+  printQRLabel() {
+    const app = this.application();
+    if (!app) return;
+    const qrUrl = this.qrCodeDataUrl();
+    if (!qrUrl) return;
+
+    const qrDataText = `
+      <div style="font-family: 'Times New Roman', Times, serif; font-size: 16px; line-height: 1.5; text-align: center; color: black;">
+        Punjab Clean Air program-PCAP (Agriculture Component) Year 2025-26<br>
+        Name ${app.farmerName}<br>
+        Father Name: ${app.fatherName || 'N/A'}<br>
+        District ${app.districtName || 'N/A'}<br>
+        CNIC ${app.cnic}<br>
+        Cell ${app.contactNumber || 'N/A'}<br>
+        Imp ${app.implementName}<br>
+        Firm ${app.bookedByFirmName || 'N/A'}<br>
+        QIC Div. ${app.divisionName || 'N/A'}<br>
+        DIC Dist.${app.districtName || 'N/A'} &nbsp;&nbsp;&nbsp;&nbsp; https://agrimech.gop.pk
+      </div>
+    `;
+
+    const printWindow = window.open('', '', 'width=800,height=600');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Print QR Label</title>
+          <style>
+            @page { margin: 10mm; }
+            body { font-family: 'Times New Roman', Times, serif; margin: 0; padding: 20px; }
+            .label-table { width: 100%; max-width: 800px; border-collapse: collapse; margin: 0 auto; border: 1px solid black; }
+            .label-table th, .label-table td { border: 1px solid black; padding: 10px; }
+            .label-table th { background-color: #5b9bd5 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; color: black; font-weight: bold; font-size: 16px; text-align: center; }
+            .qr-image { width: 220px; height: 220px; display: block; margin: 0 auto; }
+          </style>
+        </head>
+        <body>
+          <table class="label-table">
+            <thead>
+              <tr>
+                <th style="width: 55%;">QR CODE DATA</th>
+                <th style="width: 45%;">QR CODE</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="vertical-align: middle;">
+                  ${qrDataText}
+                </td>
+                <td style="vertical-align: middle; text-align: center;">
+                  <img src="${qrUrl}" class="qr-image" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <script>
+            setTimeout(() => {
+              window.print();
+              window.close();
+            }, 500);
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  }
+
+  onSubsidyProofSelected(event: any) {
+    const file = event.target.files[0];
+    if (file) {
+      this.subsidyProofFile.set(file);
+    }
+  }
+
+  removeSubsidyProof(event: Event) {
+    event.stopPropagation();
+    this.subsidyProofFile.set(null);
+  }
+
+  onExecuteSubsidyRelease() {
+    const app = this.application();
+    if (!app || !app.id) return;
+
+    this.isProcessingSubsidy.set(true);
+
+    const proofFile = this.subsidyProofFile();
+    if (proofFile) {
+      // Upload first, then release
+      this.fileUploadService.upload(proofFile).subscribe({
+        next: (event: any) => {
+          if (event.type === HttpEventType.Response) {
+            const proofPath = event.body.fileName;
+            this.performSubsidyReleaseWithProof(app.id!, proofPath);
+          }
+        },
+        error: (err) => {
+          this.snackBar.open('Proof upload failed. Please try again.', 'Error', { duration: 5000 });
+          this.isProcessingSubsidy.set(false);
+        }
+      });
+    } else {
+      // Just release (if user didn't provide proof)
+      this.performSubsidyReleaseWithProof(app.id!, undefined);
+    }
+  }
+
+  private performSubsidyReleaseWithProof(id: number, proofPath?: string) {
+    this.applicationService.releaseSubsidy(id, this.subsidyRemarks, proofPath)
+      .pipe(finalize(() => this.isProcessingSubsidy.set(false)))
+      .subscribe({
+        next: (updated) => {
+          this.application.set(updated);
+          this.subsidyRemarks = '';
+          this.subsidyProofFile.set(null);
+          this.snackBar.open('Subsidy has been officially released and recorded in the dossier.', 'Success', {
+            duration: 5000
+          });
+        },
+        error: (err) => {
+          this.snackBar.open('Lifecycle transition failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
+        }
+      });
   }
 
   onFileSelected(file: File | null) {
@@ -1518,14 +2087,439 @@ export class ApplicationDetailsComponent implements OnInit {
   onExecuteAllotment() {
     const app = this.application();
     if (!app || !app.id) return;
+    if (!this.allotmentLetterFeatureEnabled) {
+      this.showAllotmentLetterFeatureDisabled();
+      return;
+    }
+    if (this.isDistrictOfficerUser()) {
+      this.snackBar.open('This Feature is not yet available for District Officers.', 'Close', {
+        duration: 6000,
+        horizontalPosition: 'right',
+        verticalPosition: 'top'
+      });
+      return;
+    }
+    if (!this.isBallotWinnerCategory(app.allotmentCategory)) {
+      this.snackBar.open('Allotment letters can only be generated for ballot winners.', 'Close', { duration: 5000 });
+      return;
+    }
+    if (!this.allotmentModel.number || !this.allotmentModel.date) {
+      this.snackBar.open('Please enter Allotment Number and Date.', 'Close', { duration: 3000 });
+      return;
+    }
 
     this.isProcessingAllotment.set(true);
-    this.applicationService.allot(app.id, this.allotmentModel.category, this.allotmentModel.quotaNumber, this.allotmentModel.date)
-      .pipe(finalize(() => this.isProcessingAllotment.set(false)))
-      .subscribe({
-        next: (updated) => this.application.set(updated),
-        error: (err) => console.error('Allotment failed', err)
+    this.snackBar.open('Generating Allotment Letter...', 'Processing', { duration: 2000 });
+
+    const categoryForAllot = (app.allotmentCategory || this.allotmentModel.category).trim();
+
+    const enrichedApp = {
+      ...app,
+      allotmentNumber: this.allotmentModel.number,
+      allotmentDate: this.allotmentModel.date,
+      allotmentCategory: categoryForAllot,
+      allotmentQuotaNumber: this.allotmentModel.quotaNumber
+    };
+
+    this.generateAllotmentLetterPDF(enrichedApp).then(doc => {
+      const pdfBlob = doc.output('blob');
+      const pdfFile = new File([pdfBlob], `Allotment_Letter_${app.applicationNumber}.pdf`, { type: 'application/pdf' });
+
+      this.snackBar.open('Uploading Allotment Letter...', 'Sync', { duration: 2000 });
+
+      this.applicationService.uploadFile(pdfFile).subscribe({
+        next: (uploadRes: any) => {
+          const letterPath = uploadRes.fileName;
+          this.applicationService.allot(
+            app.id!, this.allotmentModel.number, categoryForAllot,
+            this.allotmentModel.quotaNumber, this.allotmentModel.date, letterPath
+          ).pipe(finalize(() => this.isProcessingAllotment.set(false)))
+            .subscribe({
+              next: (updated) => {
+                this.application.set(updated);
+                this.snackBar.open('Allotment processed & letter uploaded!', 'Success', { duration: 4000 });
+                doc.save(`Allotment_Letter_${app.applicationNumber}.pdf`);
+              },
+              error: (err) => {
+                console.error('Allotment API failed', err);
+                this.snackBar.open('Letter uploaded but allotment failed.', 'Error', { duration: 5000 });
+                doc.save(`Allotment_Letter_${app.applicationNumber}.pdf`);
+              }
+            });
+        },
+        error: (err) => {
+          console.error('Upload failed', err);
+          this.isProcessingAllotment.set(false);
+          this.snackBar.open('Failed to upload letter.', 'Error', { duration: 5000 });
+          doc.save(`Allotment_Letter_${app.applicationNumber}.pdf`);
+        }
       });
+    }).catch(err => {
+      console.error('PDF generation failed', err);
+      this.isProcessingAllotment.set(false);
+      this.snackBar.open('Failed to generate allotment letter.', 'Error', { duration: 5000 });
+    });
+  }
+
+  downloadAllotmentLetter() {
+    const app = this.application();
+    if (!app || this.isDownloadingAllotmentLetter()) return;
+    if (!this.allotmentLetterFeatureEnabled) {
+      this.showAllotmentLetterFeatureDisabled();
+      return;
+    }
+    if (this.isDistrictOfficerUser()) {
+      this.snackBar.open('This Feature is not yet available for District Officers.', 'Close', {
+        duration: 6000,
+        horizontalPosition: 'right',
+        verticalPosition: 'top'
+      });
+      return;
+    }
+    if (!this.isBallotWinnerCategory(app.allotmentCategory)) {
+      this.snackBar.open('Allotment letter is only available for ballot winners.', 'Close', { duration: 5000 });
+      return;
+    }
+    this.isDownloadingAllotmentLetter.set(true);
+    this.generateAllotmentLetterPDF(app)
+      .then(doc => {
+        doc.save(`Allotment_Letter_${app.applicationNumber}.pdf`);
+      })
+      .catch(err => {
+        console.error('PDF generation failed', err);
+        this.snackBar.open('Failed to generate allotment letter.', 'Error', { duration: 5000 });
+      })
+      .finally(() => this.isDownloadingAllotmentLetter.set(false));
+  }
+
+  private async generateAllotmentLetterPDF(app: FarmerApplicationPayload): Promise<jsPDF> {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
+    const m = 15;
+
+    const qrText = `${window.location.origin}/verify-report?type=ALLOTMENT&id=${app.applicationNumber}`;
+    const qrDataUrl = await QRCode.toDataURL(qrText, { margin: 1, width: 120 });
+
+    await this.buildUrduPage(doc, app, pw, ph, qrDataUrl);
+
+    doc.addPage();
+    this.buildEnglishPage(doc, app, pw, ph, m, qrDataUrl);
+
+    return doc;
+  }
+
+  private formatAllotmentLetterDate(iso?: string | null): string {
+    if (!iso) return '';
+    const part = iso.includes('T') ? iso.slice(0, 10) : iso.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(part)) {
+      const [y, m, d] = part.split('-');
+      return `${d}/${m}/${y}`;
+    }
+    return iso;
+  }
+
+  private ballotMeetingDateFromHistory(app: FarmerApplicationPayload): string {
+    const entry = app.history?.find(e => e.status === 'BALLOTED');
+    if (entry?.timestamp) return this.formatAllotmentLetterDate(entry.timestamp);
+    return '';
+  }
+
+  private async buildUrduPage(doc: jsPDF, app: FarmerApplicationPayload, pw: number, ph: number, qrDataUrl: string) {
+    const dots = '................';
+    const allotNum = app.allotmentNumber || dots;
+    const murasilaNo = app.applicationNumber || dots;
+    const morkha = this.formatAllotmentLetterDate(app.allotmentDate) || dots;
+    const ballotMeetingDate = this.ballotMeetingDateFromHistory(app) || dots;
+    const deadlineOffice = dots;
+    const district = app.districtName || dots;
+    const region = app.regionName || dots;
+    const division = app.divisionName || dots;
+
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;height:1123px;background:#fff;padding:40px 50px;box-sizing:border-box;font-family:"Noto Nastaliq Urdu",serif;direction:rtl;';
+    container.innerHTML = `
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&display=swap');
+        .allot-urdu * { font-family: 'Noto Nastaliq Urdu', serif; direction: rtl; }
+        .allot-urdu .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px; }
+        .allot-urdu .header img { width:76px; height:76px; min-width:76px; min-height:76px; object-fit:contain; flex-shrink:0; display:block; }
+        .allot-urdu .title-block { text-align:center; flex:1; min-width:0; padding:0 4px; }
+        .allot-urdu .title-block h1 { font-size:17px; margin:0; font-weight:700; color:#1a5c2e; line-height:1.35; }
+        .allot-urdu .title-block h2 { font-size:13px; margin:4px 0 0; font-weight:700; color:#1a5c2e; line-height:1.35; }
+        .allot-urdu .title-block h3 { font-size:11px; margin:4px 0 0; color:#333; line-height:1.35; }
+        .allot-urdu .sep { border:none; border-top:2px solid #1a5c2e; margin:12px 0; }
+        .allot-urdu .urdu-fields-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px 18px; margin-bottom:12px; }
+        .allot-urdu .uf { min-width:0; display:flex; flex-direction:column; align-items:stretch; }
+        .allot-urdu .uf-lbl { font-size:14px; line-height:1.45; text-align:center; margin-bottom:9px; color:#111; }
+        .allot-urdu .uf-track {
+          border-bottom:1px dashed #222;
+          min-height:40px;
+          display:flex;
+          align-items:flex-end;
+          justify-content:center;
+          padding:8px 10px 12px;
+          box-sizing:border-box;
+          overflow:visible;
+        }
+        .allot-urdu .uf-track.uf-track-wide { min-height:44px; }
+        .allot-urdu .uf-track.uf-track-multi { min-height:auto; padding:10px 10px 14px; align-items:flex-end; }
+        .allot-urdu .uf-val {
+          font-size:15px;
+          line-height:1.55;
+          text-align:center;
+          max-width:100%;
+          white-space:nowrap;
+          overflow-x:hidden;
+          overflow-y:visible;
+          text-overflow:ellipsis;
+          display:inline-block;
+          vertical-align:bottom;
+          padding-bottom:3px;
+        }
+        .allot-urdu .uf-val.uf-val-wrap {
+          white-space:normal;
+          word-break:break-word;
+          line-height:1.6;
+          overflow-x:hidden;
+          overflow-y:visible;
+          text-overflow:clip;
+          padding-bottom:5px;
+        }
+        .allot-urdu .urdu-row-contact-grid { display:grid; grid-template-columns:1fr 1.2fr 1fr; gap:12px 14px; margin-bottom:14px; }
+        .allot-urdu .body-text { font-size:15px; line-height:2.2; text-align:right; margin:15px 0; }
+        .allot-urdu .copies { font-size:14px; line-height:2; margin:12px 0; text-align:right; }
+        .allot-urdu .copies-title { font-weight:700; color:#1a5c2e; margin-bottom:6px; }
+        .allot-urdu .copy-row { display:flex; justify-content:space-between; gap:16px; align-items:baseline; flex-wrap:wrap; }
+        .allot-urdu .sig-block { display:flex; justify-content:space-between; align-items:flex-end; margin-top:24px; }
+        .allot-urdu .sig-right { text-align:center; }
+        .allot-urdu .sig-right .line { display:inline-block; width:200px; border-bottom:1px solid #000; margin-bottom:5px; }
+        .allot-urdu .note-line { font-size:14px; line-height:2; text-align:right; margin-top:12px; font-weight:700; }
+      </style>
+      <div class="allot-urdu">
+        <div class="header">
+          <img src="report-assets/gov.jpg" onerror="this.style.display='none'" />
+          <div class="title-block">
+            <h1>الاٹمنٹ لیٹر برائے سکیم</h1>
+            <h2>"پنجاب کلین ائیر پروگرام" برائے سال 2025-26</h2>
+            <h3>شعبہ زرعی انجینئرنگ محکمہ زراعت حکومت پنجاب</h3>
+          </div>
+          <img src="report-assets/gov-logo.png" onerror="this.style.display='none'" />
+        </div>
+
+        <hr class="sep" />
+
+        <div class="urdu-fields-grid">
+          <div class="uf">
+            <div class="uf-lbl">سیریل نمبر</div>
+            <div class="uf-track"><span class="uf-val">${allotNum}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">مراسلہ نمبر</div>
+            <div class="uf-track"><span class="uf-val">${murasilaNo}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">مورخہ</div>
+            <div class="uf-track"><span class="uf-val">${morkha}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">مسمی</div>
+            <div class="uf-track"><span class="uf-val">${app.farmerName || dots}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">ولد</div>
+            <div class="uf-track"><span class="uf-val">${app.fatherName || dots}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">شناختی کارڈنمبر</div>
+            <div class="uf-track"><span class="uf-val">${app.cnic || dots}</span></div>
+          </div>
+        </div>
+
+        <div class="uf" style="margin-bottom:12px;">
+          <div class="uf-lbl">ایڈریس</div>
+          <div class="uf-track uf-track-multi uf-track-wide">
+            <span class="uf-val uf-val-wrap">${app.address || dots}</span>
+          </div>
+        </div>
+
+        <div class="urdu-row-contact-grid">
+          <div class="uf">
+            <div class="uf-lbl">رابطہ نمبر</div>
+            <div class="uf-track"><span class="uf-val">${app.contactNumber || dots}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">بحوالہ آپ کی درخواست نمبر</div>
+            <div class="uf-track"><span class="uf-val">${app.applicationNumber || dots}</span></div>
+          </div>
+          <div class="uf">
+            <div class="uf-lbl">برائے ضلع</div>
+            <div class="uf-track"><span class="uf-val">${district}</span></div>
+          </div>
+        </div>
+
+        <hr class="sep" />
+
+        <div class="body-text">
+          عنوان بالا کے تحت آپ کو مطلع کیا جاتا ہے کہ مندرجہ بالا منصوبہ کے تحت ڈسٹرکٹ الاٹمنٹ کمیٹی ${district} کے منعقدہ اجلاس  مورخہ ${ballotMeetingDate} کو ہونے والی قرعہ اندازی میں پاک سیڈر/ سپر سیڈر پر سبسڈی کے لئے سیریل نمبر ${allotNum} پر آپ کامیاب قرار پائے ہیں۔ اس سبسڈی کے حصول کے لیے آپ سے گزارش ہے  کہ پاک سیڈر/ سپر سیڈر کی دس(10) یوم کے اندر بکنگ کروا کر  زیر دستخطی کے دفتر میں مورخہ ${deadlineOffice} تک فرم کی اصل بکنگ رسید بمعہ بینک سے حاصل کردہ اصل CDR/DD  بمطابق زمیندارہ حصہ برائے دفتر کاروائی دفتر ہذا کو جمع کروائیں۔ بصورت دیگر آپکی الاٹمنٹ منسوخ کر دی جائے گی اور ویٹنگ /Priority  لسٹ کے مطابق اگلے امیدوار کو پاک سیڈر / سپرسیڈر  الاٹ کر دیا جائے گااور کوئی عذر قبول نہ کیا جائے گا۔
+        </div>
+
+        <div class="note-line">نوٹ: 	28 منظور شدہ فرموں کی تفصیل گوشوارہ (الف)  پر درج ہے</div>
+
+        <hr class="sep" />
+
+        <div class="copies">
+          <div class="copies-title">کاپی برائے اطلاع:</div>
+          <div class="copy-row"><span>1.	ناظم اعلیٰ زراعت (فیلڈ) پنجاب لاہور پراجیکٹ ڈائریکٹر</span><span>۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔</span></div>
+          <div class="copy-row"><span>2.	ایڈیشنل ڈائریکٹر جنرل (زرعی انجینئرنگ) ۔۔۔۔۔ ${region} ریجن ۔۔۔۔۔۔۔</span><span>اسسٹنٹ ڈائریکٹر زرعی انجینئرنگ</span></div>
+          <div class="copy-row"><span>3.	ایڈیشنل ڈپٹی کمشنر (ریوینیو) ۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔</span><span>ڈسٹرکٹ۔۔۔۔۔۔۔۔۔۔۔۔ ${district}</span></div>
+          <div class="copy-row"><span>4.	ڈائریکٹر زرعی انجینئرنگ ۔۔۔۔۔۔۔۔۔۔۔ ڈویژن۔۔۔۔۔۔۔۔۔۔۔۔۔ ${division}</span><span></span></div>
+          <div class="copy-row"><span>5.	ڈپٹی ڈائریکٹر زرعی انجینئرنگ۔۔۔۔۔۔۔۔۔۔۔۔ ۔۔۔۔۔۔۔۔۔</span><span></span></div>
+        </div>
+
+        <div class="sig-block">
+          <div><img src="${qrDataUrl}" style="width:90px;height:90px;" /></div>
+          <div class="sig-right">
+            <div class="line">&nbsp;</div>
+            <div style="font-weight:700;">ڈپٹی ڈائریکٹر زرعی انجینئرنگ</div>
+            <div>${district}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(container);
+
+    await new Promise(r => setTimeout(r, 1500));
+
+    const canvas = await html2canvas(container, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' });
+    document.body.removeChild(container);
+
+    const imgData = canvas.toDataURL('image/png');
+    doc.addImage(imgData, 'PNG', 0, 0, pw, ph);
+  }
+
+  private buildEnglishPage(doc: jsPDF, app: FarmerApplicationPayload, pw: number, ph: number, m: number, qrDataUrl: string) {
+    const logoMm = 26;
+    const logoInset = 8;
+    const logoY = 7;
+
+    try {
+      (doc as any).setAlpha(0.06);
+      doc.addImage('report-assets/gov-logo.png', 'PNG', pw / 4, ph / 3.5, pw / 2, pw / 2);
+      (doc as any).setAlpha(1);
+    } catch (_) { }
+
+    try {
+      doc.addImage('report-assets/gov-logo.png', 'PNG', logoInset, logoY, logoMm, logoMm);
+      doc.addImage('report-assets/gov.jpg', 'JPEG', pw - logoInset - logoMm, logoY, logoMm, logoMm);
+    } catch (_) { }
+
+    const titleMaxW = pw - 2 * m;
+    const titleLineH = 4.1;
+    let titleY = logoY + logoMm + 5;
+
+    doc.setFont('times', 'bold');
+    doc.setFontSize(8.5);
+    const enTitle1 = doc.splitTextToSize(
+      'FINAL ALLOTMENT FORM OF PAK/SUPER SEEDER UNDER PROJECT TITLED',
+      titleMaxW
+    );
+    doc.text(enTitle1, pw / 2, titleY, { align: 'center' });
+    titleY += enTitle1.length * titleLineH;
+
+    doc.setFontSize(8.5);
+    const enTitle2 = doc.splitTextToSize(
+      '"PUNJAB CLEAN AIR PROGRAM (PCAP)" FOR THE YEAR 2025-26',
+      titleMaxW
+    );
+    doc.text(enTitle2, pw / 2, titleY, { align: 'center' });
+    titleY += enTitle2.length * titleLineH;
+
+    doc.setFontSize(8);
+    const enTitle3 = doc.splitTextToSize('by FIELD WING OF AGRICULTURE DEPARTMENT', titleMaxW);
+    doc.text(enTitle3, pw / 2, titleY, { align: 'center' });
+    titleY += enTitle3.length * titleLineH + 3;
+
+    doc.setLineWidth(0.4);
+    doc.line(m, titleY, pw - m, titleY);
+
+    let y = titleY + 10;
+    doc.setFont('times', 'normal');
+    doc.setFontSize(11);
+
+    const fields = [
+      ['Name of Farmer', app.farmerName || 'N/A'],
+      ["Father's Name", app.fatherName || 'N/A'],
+      ['District', app.districtName || 'N/A'],
+      ['Priority No.', String(app.allotmentQuotaNumber ?? 'N/A')],
+      ['CNIC Number', app.cnic || 'N/A'],
+      ['Phone No.', app.contactNumber || 'N/A'],
+      ['Address', app.address || 'N/A'],
+      ['Allotment No.', app.allotmentNumber || 'N/A'],
+      ['Allotment Date', app.allotmentDate || 'N/A'],
+      ['Category', app.allotmentCategory || 'N/A'],
+    ];
+
+    fields.forEach(([label, value]) => {
+      doc.setFont('times', 'bold');
+      doc.text(`${label}:`, m, y);
+      doc.setFont('times', 'normal');
+      doc.text(String(value), m + 45, y);
+      y += 7;
+    });
+
+    y += 5;
+    doc.setLineWidth(0.3);
+    doc.line(m, y, pw - m, y);
+    y += 5;
+
+    const totalCost = app.totalCostPrice ?? 0;
+    const govtShare = app.governmentShare ?? 0;
+    const farmerCost = app.farmerShare ?? 0;
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: m, right: m },
+      head: [['Sr.', 'Implement Name', 'Allotment Details', 'Total Amount (Rs)', 'Govt Share (Rs)', 'Farmer Share (Rs)']],
+      body: [[
+        '1',
+        app.implementName || 'N/A',
+        `${app.allotmentCategory || 'N/A'} / P-${app.allotmentQuotaNumber ?? '-'} / ${app.allotmentDate || 'N/A'}`,
+        totalCost.toLocaleString(),
+        govtShare.toLocaleString(),
+        farmerCost.toLocaleString()
+      ]],
+      theme: 'grid',
+      headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9, halign: 'center', lineWidth: 0.1, lineColor: [180, 180, 180] },
+      bodyStyles: { fontSize: 9, textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [180, 180, 180] },
+      columnStyles: { 0: { halign: 'center', cellWidth: 12 } }
+    });
+
+    y = (doc as any).lastAutoTable.finalY + 20;
+
+    doc.setFont('times', 'normal');
+    doc.setFontSize(9);
+    const disclaimer = 'Note: This allotment letter is non-transferable and subject to verification. The farmer must deposit the required share within the stipulated time. Failure to do so may result in cancellation of the allotment.';
+    const splitDisclaimer = doc.splitTextToSize(disclaimer, pw - m * 2);
+    doc.text(splitDisclaimer, m, y);
+
+    const sigBlockY = Math.max(y + 25, ph - 55);
+
+    try {
+      doc.addImage(qrDataUrl, 'PNG', pw / 2 - 15, sigBlockY - 20, 30, 30);
+    } catch (_) { }
+
+    doc.setFont('times', 'bold');
+    doc.setFontSize(10);
+
+    doc.text('____________________________', m, sigBlockY);
+    doc.text('Farmer Signature', m, sigBlockY + 6);
+
+    doc.text('____________________________', pw - m, sigBlockY, { align: 'right' });
+    doc.text('Assistant Director', pw - m, sigBlockY + 6, { align: 'right' });
+    doc.text('Agricultural Engineering', pw - m, sigBlockY + 12, { align: 'right' });
+    doc.text(app.districtName || '', pw - m, sigBlockY + 18, { align: 'right' });
   }
 
   onStartQIC(app: FarmerApplicationPayload) {
@@ -1539,7 +2533,9 @@ export class ApplicationDetailsComponent implements OnInit {
   isDicDecisionWizardActive = signal(false);
   dicDecisionProcess = signal<'ACCEPT' | 'DEFER' | null>(null);
   dicDeferRemarks = signal('');
+  dicApprovalRemarks = signal('');
   signedDicFile: File | null = null;
+  signedEsScreeningFile: File | null = null;
 
   async onStartDIC(app: any) {
     if (app.status === 'DIC_IN_PROGRESS') {
@@ -1553,43 +2549,61 @@ export class ApplicationDetailsComponent implements OnInit {
     this.isDicDecisionWizardActive.set(false);
     this.dicDecisionProcess.set(null);
     this.signedDicFile = null;
+    this.signedEsScreeningFile = null;
     this.dicDeferRemarks.set('');
+    this.dicApprovalRemarks.set('');
   }
 
   onSignedFileSelected(event: any) {
     const file = event.target.files[0];
     if (file && file.type === 'application/pdf') {
-       this.signedDicFile = file;
+      this.signedDicFile = file;
     } else {
-       this.snackBar.open('Please select a valid PDF file.', 'Error', { duration: 3000 });
+      this.snackBar.open('Please select a valid PDF file.', 'Error', { duration: 3000 });
+    }
+  }
+
+  onSignedEsFileSelected(event: any) {
+    const file = event.target.files[0];
+    if (file && file.type === 'application/pdf') {
+      this.signedEsScreeningFile = file;
+    } else {
+      this.snackBar.open('Please select a valid PDF file.', 'Error', { duration: 3000 });
     }
   }
 
   submitDicApproval() {
     const app = this.application();
-    if (!app || !this.signedDicFile) return;
+    if (!app || !this.signedDicFile || !this.signedEsScreeningFile) return;
 
     this.isGeneratingReport.set(true);
-    this.snackBar.open('Archiving Official Signed Dossier...', 'Sync', { duration: 2000 });
-    
-    this.applicationService.uploadFile(this.signedDicFile).subscribe({
-      next: (uploadRes: any) => {
-        this.applicationService.approveDic(app.id!, uploadRes.fileName).subscribe({
+    this.snackBar.open('Archiving Official Signed Dossiers...', 'Sync', { duration: 2000 });
+
+    forkJoin({
+      dicReport: this.applicationService.uploadFile(this.signedDicFile),
+      esScreening: this.applicationService.uploadFile(this.signedEsScreeningFile)
+    }).subscribe({
+      next: (responses: any) => {
+        const signedDicReportPath = responses.dicReport.fileName;
+        const signedEsScreeningReportPath = responses.esScreening.fileName;
+        const remarks = this.dicApprovalRemarks();
+
+        this.applicationService.approveDic(app.id!, signedDicReportPath, signedEsScreeningReportPath, remarks).subscribe({
           next: (updated) => {
-             this.application.set(updated);
-             this.isGeneratingReport.set(false);
-             this.closeDicWizard();
-             this.snackBar.open('DIC Inspection Accepted & Finalized!', 'Success', { duration: 4000 });
+            this.application.set(updated);
+            this.isGeneratingReport.set(false);
+            this.closeDicWizard();
+            this.snackBar.open('DIC Inspection Accepted & Finalized!', 'Success', { duration: 4000 });
           },
           error: (err) => {
-             this.isGeneratingReport.set(false);
-             this.snackBar.open('Approval failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
+            this.isGeneratingReport.set(false);
+            this.snackBar.open('Approval failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
           }
         });
       },
       error: () => {
-         this.isGeneratingReport.set(false);
-         this.snackBar.open('Dossier upload failed.', 'Error', { duration: 4000 });
+        this.isGeneratingReport.set(false);
+        this.snackBar.open('One or more dossier uploads failed.', 'Error', { duration: 4000 });
       }
     });
   }
@@ -1601,14 +2615,14 @@ export class ApplicationDetailsComponent implements OnInit {
     this.isGeneratingReport.set(true);
     this.applicationService.deferDic(app.id!, this.dicDeferRemarks()).subscribe({
       next: (updated) => {
-         this.application.set(updated);
-         this.isGeneratingReport.set(false);
-         this.closeDicWizard();
-         this.snackBar.open('DIC Inspection Deferred Successfully', 'Deferred', { duration: 4000 });
+        this.application.set(updated);
+        this.isGeneratingReport.set(false);
+        this.closeDicWizard();
+        this.snackBar.open('DIC Inspection Deferred Successfully', 'Deferred', { duration: 4000 });
       },
       error: (err) => {
-         this.isGeneratingReport.set(false);
-         this.snackBar.open('Defer failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
+        this.isGeneratingReport.set(false);
+        this.snackBar.open('Defer failed: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
       }
     });
   }
@@ -1619,7 +2633,7 @@ export class ApplicationDetailsComponent implements OnInit {
 
     this.isGeneratingReport.set(true);
     this.snackBar.open('Acquiring convener authorization...', 'Processing', { duration: 1500 });
-    
+
     this.applicationService.getConcernConvener(app.id).subscribe({
       next: (convener) => this.generateDicReportFinal(app, convener),
       error: () => {
@@ -1634,7 +2648,7 @@ export class ApplicationDetailsComponent implements OnInit {
       const doc = new jsPDF('p', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
       const margin = 15;
-      
+
       const baseUrl = window.location.origin;
       const qrText = `${baseUrl}/verify-report?type=DIC&id=${app.applicationNumber}`;
 
@@ -1645,7 +2659,7 @@ export class ApplicationDetailsComponent implements OnInit {
           (doc as any).setAlpha(0.08); // Very light watermark
           doc.addImage('report-assets/gov-logo.png', 'PNG', pageWidth / 4, pageHeight / 3.5, pageWidth / 2, pageWidth / 2);
           (doc as any).setAlpha(1); // Reset alpha
-        } catch (e) {}
+        } catch (e) { }
 
         // Headers & Logos
         try {
@@ -1668,13 +2682,13 @@ export class ApplicationDetailsComponent implements OnInit {
 
         doc.setFont('times', 'normal');
         const reportDate = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
-        
+
         doc.text(`DIC No. DIC-${app.applicationNumber?.replace('APP-', '')}`, margin, 52);
-        doc.text(`Date of Inspection: ${reportDate}`, pageWidth - margin, 52, { align: 'right' });
-        
+        doc.text(`Printed On: ${reportDate}`, pageWidth - margin, 52, { align: 'right' });
+
         doc.text(`Farmer District: ${app.districtName || 'N/A'}`, margin, 60);
-        doc.text(`Firm: ${app.bookedByFirmName || 'N/A'}, ${app.divisionName || 'N/A'}`, pageWidth - margin, 60, { align: 'right' });
-        
+        doc.text(`Firm: ${app.bookedByFirmName || 'N/A'}`, pageWidth - margin, 60, { align: 'right' });
+
         doc.setFont('times', 'bold');
         doc.text(`machine / implement: ${app.implementName}`, margin, 68);
 
@@ -1683,7 +2697,7 @@ export class ApplicationDetailsComponent implements OnInit {
           startY: 75,
           margin: { left: margin, right: margin },
           head: [['Sr. No.', 'Allottee Name', 'CNIC', 'Mailing Address', 'Tehsil', 'machine / implement ID', 'Tracker IMEI No.']],
-          body: [[ '1', app.farmerName || 'N/A', app.cnic || 'N/A', app.address || 'N/A', app.markazName || 'N/A', app.uniqueImplementId || 'N/A', app.trackerImei || 'N/A' ]],
+          body: [['1', app.farmerName || 'N/A', app.cnic || 'N/A', app.address || 'N/A', app.markazName || 'N/A', app.uniqueImplementId || 'N/A', app.trackerImei || 'N/A']],
           theme: 'grid',
           headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 9, halign: 'center', valign: 'middle', lineWidth: 0.1, lineColor: [200, 200, 200] },
           bodyStyles: { fontSize: 9, textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [200, 200, 200] },
@@ -1710,7 +2724,7 @@ export class ApplicationDetailsComponent implements OnInit {
         const colCenterLeft = margin + (pageWidth - margin * 2) / 4;
         const colCenterRight = pageWidth - margin - (pageWidth - margin * 2) / 4;
         doc.setFontSize(8);
-        
+
         doc.text('Rep of Deputy Director Agriculture', colCenterLeft, finalY, { align: 'center' });
         doc.text('(Water Management) ' + (app.districtName || ''), colCenterLeft, finalY + 4, { align: 'center' });
         doc.text('(Member)', colCenterLeft, finalY + 8, { align: 'center' });
@@ -1733,16 +2747,16 @@ export class ApplicationDetailsComponent implements OnInit {
 
         finalY += 10; doc.setFont('times', 'normal');
         doc.text('Copy for information to.', margin, finalY);
-        
+
         finalY += 5;
-        const copies = [ '1. The Director General Agricultural (Field) Punjab, Lahore', '2-5. All Committee Members.', `6. M/S ${app.bookedByFirmName || 'N/A'}` ];
+        const copies = ['1. The Director General Agricultural (Field) Punjab, Lahore', '2-5. All Committee Members.', `6. M/S ${app.bookedByFirmName || 'N/A'}`];
         copies.forEach((text, line) => { doc.text(text, margin + 5, finalY + (line * 5)); });
 
         // Convener Signature (DD AE or fetched title)
         doc.setFont('times', 'bold');
         doc.setFontSize(9);
         doc.text(convener?.designation || 'Deputy Director Agricultural Engineering', colCenterRight, secretaryY, { align: 'center' });
-        doc.text(convener?.districtName || app.districtName || '', colCenterRight, secretaryY + 4, { align: 'center' });
+        doc.text(app.districtName || '', colCenterRight, secretaryY + 4, { align: 'center' });
         doc.text('(Convener)', colCenterRight, secretaryY + 8, { align: 'center' });
 
         // NEW: Upload and Save DIC Report to Database
@@ -1750,34 +2764,39 @@ export class ApplicationDetailsComponent implements OnInit {
         const pdfFile = new File([pdfBlob], `DIC_Report_${app.applicationNumber}.pdf`, { type: 'application/pdf' });
 
         this.snackBar.open('Uploading DIC Performa to Server...', 'Sync', { duration: 1500 });
-        
+
         this.applicationService.uploadFile(pdfFile).subscribe({
-            next: (uploadRes: any) => {
-                const reportPath = uploadRes.fileName;
-                this.applicationService.startDicInspection(app.id!, reportPath).subscribe({
-                    next: (updatedApp) => {
-                        this.application.set(updatedApp);
-                        this.isGeneratingReport.set(false);
-                        this.snackBar.open(`DIC Report Generated & Saved to Dossier!`, 'Success', { duration: 4000 });
-                        
-                        // Also trigger local download for user convenience
-                        doc.save(`DIC_Report_${app.applicationNumber}.pdf`);
-                    },
-                    error: (err) => {
-                        console.error('Failed to update DIC status', err);
-                        this.isGeneratingReport.set(false);
-                        this.snackBar.open('Report uploaded, but status update failed.', 'Warning', { duration: 5000 });
-                        doc.save(`DIC_Report_${app.applicationNumber}.pdf`);
-                    }
-                });
-            },
-            error: (err) => {
-                console.error('File upload failed', err);
+          next: (uploadRes: any) => {
+            const reportPath = uploadRes.fileName;
+            this.applicationService.startDicInspection(app.id!, reportPath).subscribe({
+              next: (updatedApp) => {
+                this.application.set(updatedApp);
                 this.isGeneratingReport.set(false);
-                this.snackBar.open('Failed to upload report to server.', 'Error', { duration: 5000 });
-                // Fallback: Local download only
+                this.snackBar.open(`DIC & ES Screening Reports Generated!`, 'Success', { duration: 4000 });
+
+                // 1. Download DIC Report (PDF)
                 doc.save(`DIC_Report_${app.applicationNumber}.pdf`);
-            }
+
+                // 2. Download ES Screening Document (DOCX) via Authorized Service
+                if (updatedApp.esScreeningReportPath) {
+                  this.downloadAttachment(updatedApp.esScreeningReportPath);
+                }
+              },
+              error: (err) => {
+                console.error('Failed to update DIC status', err);
+                this.isGeneratingReport.set(false);
+                this.snackBar.open('Report uploaded, but status update failed.', 'Warning', { duration: 5000 });
+                doc.save(`DIC_Report_${app.applicationNumber}.pdf`);
+              }
+            });
+          },
+          error: (err) => {
+            console.error('File upload failed', err);
+            this.isGeneratingReport.set(false);
+            this.snackBar.open('Failed to upload report to server.', 'Error', { duration: 5000 });
+            // Fallback: Local download only
+            doc.save(`DIC_Report_${app.applicationNumber}.pdf`);
+          }
         });
       });
     } catch (err) {
@@ -1809,10 +2828,10 @@ export class ApplicationDetailsComponent implements OnInit {
         next: (updated) => {
           this.application.set(updated);
           this.editingField.set(null);
-          
+
           // Enhanced success feedback
           const fieldLabel = field.replace(/([A-Z])/g, ' $1').toLowerCase();
-          this.snackBar.open(`Excellent! The ${fieldLabel} has been updated successfully.`, 'Dismiss', { 
+          this.snackBar.open(`Excellent! The ${fieldLabel} has been updated successfully.`, 'Dismiss', {
             duration: 4000,
             horizontalPosition: 'right',
             verticalPosition: 'top',
@@ -1860,7 +2879,7 @@ export class ApplicationDetailsComponent implements OnInit {
     // Profile Info
     doc.setFontSize(12);
     doc.text('Applicant Profile', margin, 50);
-    
+
     autoTable(doc, {
       startY: 55,
       body: [
@@ -1879,7 +2898,7 @@ export class ApplicationDetailsComponent implements OnInit {
     // Machine Info
     let finalY = (doc as any).lastAutoTable.finalY + 10;
     doc.text('Equipment & Machine / implement Details', margin, finalY);
-    
+
     autoTable(doc, {
       startY: finalY + 5,
       body: [
@@ -1898,7 +2917,7 @@ export class ApplicationDetailsComponent implements OnInit {
     finalY = (doc as any).lastAutoTable.finalY + 15;
     doc.setFontSize(12);
     doc.text('Digital Verification QR Code', margin, finalY);
-    
+
     const qrUrl = this.qrCodeDataUrl();
     if (qrUrl) {
       doc.addImage(qrUrl, 'PNG', margin, finalY + 5, 40, 40);
@@ -1911,7 +2930,7 @@ export class ApplicationDetailsComponent implements OnInit {
     doc.text(splitCertText, margin + 50, finalY + 15);
 
     doc.save(`Application_${app.applicationNumber}.pdf`);
-    
+
     setTimeout(() => {
       this.isGeneratingReport.set(false);
       this.snackBar.open('Dossier Generated Successfully', 'Success', { duration: 3000 });
@@ -1924,16 +2943,22 @@ export class ApplicationDetailsComponent implements OnInit {
     const currentStatus = app.status;
     const phaseIndex = this.phases.indexOf(phase);
     const currentIndex = this.phases.findIndex(p => p.statuses.includes(currentStatus));
-    
+
     // If the phase is completed, it's not the active (current) one
     if (this.isPhaseCompleted(phase)) return false;
 
     // A phase is active if it's the current one determined by global status...
     if (phaseIndex === currentIndex) return true;
 
+    // Allotment is active when Balloting is completed (status BALLOTED)
+    if (phase.key === 'ALLOTMENT' && currentStatus === 'BALLOTED') return true;
+
+    // Booking is active when Allotment is completed (status ALLOTED)
+    if (phase.key === 'BOOKING' && currentStatus === 'ALLOTED') return true;
+
     // ...OR if the application has pushed into this phase via local logic but global status lags
     if (phase.key === 'SUBSIDY' && this.isPhaseCompleted(this.phases[5])) {
-       return currentIndex <= 5; // Subsidy active if DIC is done and global is still at or before DIC
+      return currentIndex <= 5; // Subsidy active if DIC is done and global is still at or before DIC
     }
 
     return false;
@@ -1945,19 +2970,29 @@ export class ApplicationDetailsComponent implements OnInit {
     const currentStatus = app.status;
     const phaseIndex = this.phases.indexOf(phase);
     const currentIndex = this.phases.findIndex(p => p.statuses.includes(currentStatus));
-    
+
     // Normal progress via global status
     if (currentIndex > phaseIndex) return true;
-    if (phaseIndex === currentIndex && ['QIC_APPROVED', 'DIC_APPROVED', 'COMPLETED'].includes(currentStatus)) return true;
+    if (phaseIndex === currentIndex && ['BALLOTED', 'ALLOTED', 'QIC_APPROVED', 'DIC_APPROVED', 'SUBSIDY_PAID', 'COMPLETED'].includes(currentStatus)) return true;
 
     // Special Decoupled Logic for QIC
     if (phase.key === 'INSPECTION' && (app.localDecision === 'PASSED' || app.localDecision === 'DEFERRED' || app.localDecision === 'DEFFERED')) {
-       return true;
+      return true;
     }
 
     // DIC completed if we are at Subsidy or later
     if (phase.key === 'DIC_INSPECTION' && ['REQUEST_INVOICE', 'SUBSIDY_PAID', 'COMPLETED'].includes(currentStatus)) {
-        return true;
+      return true;
+    }
+
+    // Subsidy (Farmer Share) is completed if it's paid
+    if (phase.key === 'SUBSIDY' && ['SUBSIDY_PAID', 'COMPLETED'].includes(currentStatus)) {
+      return true;
+    }
+
+    // Application is functionally completed if subsidy is paid
+    if (phase.key === 'COMPLETED' && currentStatus === 'SUBSIDY_PAID') {
+      return true;
     }
 
     return false;
@@ -1971,21 +3006,21 @@ export class ApplicationDetailsComponent implements OnInit {
     const remarks = prompt('Please provide final REJECTION remarks for this machinery unit:');
     if (remarks === null) return;
     if (!remarks.trim()) {
-        alert('Remarks are mandatory for rejection.');
-        return;
+      alert('Remarks are mandatory for rejection.');
+      return;
     }
 
     this.isGeneratingReport.set(true);
     this.applicationService.rejectDic(app.id!, remarks).subscribe({
-        next: (updated) => {
-            this.application.set(updated);
-            this.isGeneratingReport.set(false);
-            this.snackBar.open('Machinery Unit REJECTED officially.', 'Rejected', { duration: 4000 });
-        },
-        error: (err) => {
-            this.isGeneratingReport.set(false);
-            this.snackBar.open('Failed to reject: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
-        }
+      next: (updated) => {
+        this.application.set(updated);
+        this.isGeneratingReport.set(false);
+        this.snackBar.open('Machinery Unit REJECTED officially.', 'Rejected', { duration: 4000 });
+      },
+      error: (err) => {
+        this.isGeneratingReport.set(false);
+        this.snackBar.open('Failed to reject: ' + (err.error?.message || 'Server error'), 'Error', { duration: 5000 });
+      }
     });
   }
 
@@ -1993,9 +3028,11 @@ export class ApplicationDetailsComponent implements OnInit {
     const app = this.application();
     if (!app) return 'Pending';
     const currentStatus = app.status;
-    
+
     if (this.isPhaseCompleted(phase)) return 'Completed';
     if (this.isPhaseActive(phase)) {
+      if (phase.key === 'BOOKING' && currentStatus === 'ALLOTED') return 'Pending';
+      if (phase.key === 'ALLOTMENT' && currentStatus === 'BALLOTED') return 'Pending';
       if (phase.key === 'INSPECTION' && (currentStatus === 'BOOKED' || currentStatus === 'QIC_PENDING') && this.hasStartInspectionFeature()) {
         return 'Ready for Inspection';
       }
@@ -2007,7 +3044,7 @@ export class ApplicationDetailsComponent implements OnInit {
 
   downloadAttachment(path: string) {
     if (!path) return;
-    
+
     this.snackBar.open('Initializing specialized file stream...', 'Download', { duration: 2000 });
     this.fileUploadService.download(path).subscribe({
       next: (blob) => {
@@ -2022,17 +3059,36 @@ export class ApplicationDetailsComponent implements OnInit {
     });
   }
 
-  onViewLiveLocation(imei: string) {
-    if (!imei) return;
-    this.dialog.open(MapJourneyDialogComponent, {
-      data: { imei },
-      width: '100vw',
-      maxWidth: '100vw',
-      height: '100vh',
-      panelClass: 'fullscreen-dialog',
-      disableClose: true
-    });
-  }
+  /**
+   * Opens Google Maps at the tracker’s last known position (same data source as Machines Live Reporting).
+   */
+  onViewMap(app: FarmerApplicationPayload) {
+    const imei = (app.trackerImei ?? '').trim();
+    if (!imei || imei === 'PENDING') return;
 
-  private dialog = inject(MatDialog);
+    this.isOpeningMap.set(true);
+    this.machineLiveReportService
+      .getLiveReports(0, 1, {
+        imei,
+        reportSourceModes: ['GPS'],
+        sortBy: 'GPS_TIMESTAMP',
+        sortDirection: 'DESC'
+      })
+      .pipe(finalize(() => this.isOpeningMap.set(false)))
+      .subscribe({
+        next: (res) => {
+          const row = res.content?.[0];
+          const lat = row?.latitude;
+          const lng = row?.longitude;
+          if (lat != null && lng != null && (lat !== 0 || lng !== 0)) {
+            window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
+            return;
+          }
+          this.snackBar.open('No GPS position available for this tracker yet.', 'Dismiss', { duration: 5000 });
+        },
+        error: () => {
+          this.snackBar.open('Could not load tracker location.', 'Dismiss', { duration: 5000 });
+        }
+      });
+  }
 }

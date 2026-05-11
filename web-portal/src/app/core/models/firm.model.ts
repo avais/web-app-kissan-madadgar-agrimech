@@ -4,6 +4,10 @@ export interface Firm {
     address: string;
     email: string;
     phone?: string;
+    /** National Tax Number (FBR). */
+    ntn?: string;
+    /** Sales Tax Registration Number. */
+    strn?: string;
     active: boolean;
     markazId?: number;
     markazName?: string;
